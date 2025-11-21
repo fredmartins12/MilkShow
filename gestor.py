@@ -272,6 +272,7 @@ menu = st.sidebar.radio("Módulos", [
     "📦 Armazém Avançado", 
     "🐄 Rebanho Geral", 
     "📅 Calendário & Agenda",
+    "🥛 Controle de Ordenha",
     "⚙️ Configurações"
 ])
 
@@ -1155,6 +1156,94 @@ elif menu == "📅 Calendário & Agenda":
                                 for _, ev in eventos_dia.iterrows():
                                     st.caption(f"{ev['icon']} {ev['animal']}")
                                     st.markdown(f"<span style='color:{ev['cor']}; font-size:0.8em;'>{ev['tipo']}</span>", unsafe_allow_html=True)
+# ==============================================================================
+# MÓDULO: CONTROLE DE ORDENHA (NOVO)
+# ==============================================================================
+elif menu == "🥛 Controle de Ordenha":
+    st.title("🥛 Controle Diário de Ordenha")
+    st.markdown("Acompanhe em detalhes o que aconteceu hoje no curral (integração com App Fazenda).")
+    
+    # Filtro de Data
+    data_analise = st.date_input("Selecione a Data para Análise:", datetime.date.today())
+    str_data = str(data_analise)
+    
+    # Pega os dados de produção da memória (vindos do Firebase)
+    df_prod = pd.DataFrame(st.session_state.db["producao"])
+    
+    if not df_prod.empty:
+        # Filtra pela data selecionada
+        # Garante que a coluna 'data' seja string para comparar
+        df_prod['data'] = df_prod['data'].astype(str)
+        df_dia = df_prod[df_prod['data'] == str_data]
+        
+        if not df_dia.empty:
+            # Lista de animais que passaram pelo curral nesse dia
+            animais_presentes = df_dia['id_animal'].unique()
+            
+            # Métricas Gerais do Dia
+            total_leite_dia = df_dia['leite'].sum()
+            total_racao_dia = df_dia['racao'].sum()
+            
+            c_m1, c_m2, c_m3 = st.columns(3)
+            c_m1.metric("Vacas Ordenhadas", len(animais_presentes))
+            c_m2.metric("Total Leite Dia", f"{total_leite_dia:.2f} L")
+            c_m3.metric("Ração Consumida", f"{total_racao_dia:.2f} kg")
+            
+            st.divider()
+            st.markdown("### 🔎 Detalhamento por Animal")
+            
+            for animal_id in animais_presentes:
+                # Filtra os dados apenas dessa vaca
+                df_cow = df_dia[df_dia['id_animal'] == animal_id]
+                
+                # Tenta pegar o nome (se não tiver na produção, tenta buscar na lista de animais)
+                if 'nome_animal' in df_cow.columns:
+                    nome = df_cow['nome_animal'].iloc[0]
+                else:
+                    nome = f"ID {animal_id}"
+                
+                # Calcula totais individuais
+                comparecimentos = len(df_cow)
+                total_leite_vaca = df_cow['leite'].sum()
+                total_racao_vaca = df_cow['racao'].sum()
+                
+                # Calcula por turno (assumindo 1=Manhã, 2=Tarde, 3=Noite)
+                leite_manha = df_cow[df_cow['turno'] == 1]['leite'].sum()
+                leite_tarde = df_cow[df_cow['turno'] == 2]['leite'].sum()
+                leite_noite = df_cow[df_cow['turno'] == 3]['leite'].sum()
+                
+                # Exibe o Card da Vaca
+                with st.container(border=True):
+                    col_info, col_detalhes = st.columns([2, 3])
+                    
+                    with col_info:
+                        st.subheader(f"🐄 {nome}")
+                        st.caption(f"Brinco: {animal_id}")
+                        st.markdown(f"""
+                        **Resumo do Dia:**
+                        - Compareceu ao curral: **{comparecimentos} vezes**
+                        - Comeu: **{total_racao_vaca:.2f} kg** de ração
+                        - Produziu: **{total_leite_vaca:.2f} L** no total
+                        """)
+                        
+                    with col_detalhes:
+                        st.markdown("**Produção por Turno:**")
+                        c_t1, c_t2, c_t3 = st.columns(3)
+                        
+                        # Formatação condicional visual
+                        cor_m = "normal" if leite_manha > 0 else "off"
+                        cor_t = "normal" if leite_tarde > 0 else "off"
+                        cor_n = "normal" if leite_noite > 0 else "off"
+
+                        c_t1.metric("🌞 Manhã (T1)", f"{leite_manha:.1f} L", delta_color=cor_m)
+                        c_t2.metric("🌤️ Tarde (T2)", f"{leite_tarde:.1f} L", delta_color=cor_t)
+                        c_t3.metric("🌙 Noite (T3)", f"{leite_noite:.1f} L", delta_color=cor_n)
+
+        else:
+            st.warning(f"⚠️ Nenhum registro de ordenha encontrado para o dia {data_analise.strftime('%d/%m/%Y')}.")
+            st.info("Aguardando sincronização do aplicativo da fazenda...")
+    else:
+        st.info("O banco de dados de produção está vazio. Realize a primeira ordenha no app da Fazenda.")
 
 # ==============================================================================
 # MÓDULO 9: CONFIGURAÇÕES (RESET)
@@ -1169,6 +1258,7 @@ elif menu == "⚙️ Configurações":
     if st.button("APAGAR TUDO (Reset de Fábrica)", type="primary"):
 
         limpar_banco_completo()
+
 
 
 
