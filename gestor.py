@@ -867,23 +867,81 @@ elif menu == "📦 Armazém Avançado":
             st.warning("Estoque vazio. Faça uma compra antes.")
 
 # ==============================================================================
-# MÓDULO 7: REBANHO GERAL
+# MÓDULO 7: REBANHO GERAL (ATUALIZADO COM CADASTRO)
 # ==============================================================================
 elif menu == "🐄 Rebanho Geral":
     st.markdown("### 🐄 Inventário e Gestão")
+
+    # --- NOVO: ÁREA DE CADASTRO MANUAL ---
+    with st.expander("➕ CADASTRAR NOVO ANIMAL (Entrada Inicial/Inventário)", expanded=False):
+        st.info("Use esta área para cadastrar animais que já estão na fazenda (Inventário Inicial).")
+        with st.form("form_cadastro_geral"):
+            c_cad1, c_cad2, c_cad3 = st.columns(3)
+            novo_id = c_cad1.text_input("Brinco / ID do Animal")
+            novo_nome = c_cad2.text_input("Nome / Apelido")
+            novo_sexo = c_cad3.radio("Sexo", ["Fêmea", "Macho"], horizontal=True)
+            
+            c_cad4, c_cad5, c_cad6 = st.columns(3)
+            novo_status = c_cad4.selectbox("Status Atual", ["Lactação", "Seca", "Novilha", "Garrote", "Touro"])
+            novo_lote = c_cad5.selectbox("Lote Inicial", ["A", "B", "C", "Maternidade", "Recria", "Engorda", "Geral"])
+            novo_nasc = c_cad6.date_input("Data Nascimento (Aprox.)", value=None)
+            
+            # Campos condicionais (apenas visualmente, na lógica salvamos tudo se preenchido)
+            st.markdown("---")
+            st.caption("Dados Reprodutivos (Apenas para Fêmeas Adultas)")
+            c_rep1, c_rep2 = st.columns(2)
+            novo_parto = c_rep1.date_input("Último Parto (se houver)", value=None)
+            novo_insem = c_rep2.date_input("Última Inseminação (se houver)", value=None)
+            nova_prenhez = st.checkbox("Animal está Prenhe?")
+            
+            if st.form_submit_button("💾 Salvar Animal no Banco de Dados"):
+                if novo_id and novo_nome:
+                    # Verifica duplicidade
+                    ids_existentes = [a['id'] for a in st.session_state.db["animais"]]
+                    if novo_id in ids_existentes:
+                        st.error("Erro: Já existe um animal com este ID/Brinco!")
+                    else:
+                        dados_animal = {
+                            "id": novo_id,
+                            "nome": novo_nome,
+                            "status": novo_status,
+                            "lote": novo_lote,
+                            "sexo": novo_sexo,
+                            "nasc": str(novo_nasc) if novo_nasc else None,
+                            "freq": 2 if novo_status == "Lactação" else 0, # Padrão 2 ordenhas
+                            "mae_id": None, # Cadastro manual não vincula mãe automaticamente
+                            "colostro": True, # Assume que adulto já tomou
+                            "dt_parto": str(novo_parto) if novo_parto else None,
+                            "dt_insem": str(novo_insem) if novo_insem else None,
+                            "prenhez": nova_prenhez
+                        }
+                        
+                        adicionar_item("animais", dados_animal)
+                        st.success(f"Sucesso! {novo_nome} ({novo_id}) foi adicionado ao rebanho.")
+                        time.sleep(1)
+                        st.rerun()
+                else:
+                    st.warning("Preencha pelo menos o ID e o Nome.")
+
+    st.divider()
+    
+    # --- CÓDIGO EXISTENTE DE VISUALIZAÇÃO ---
     df_raw = pd.DataFrame(st.session_state.db["animais"])
     
     if df_raw.empty:
         st.warning("Nenhum animal cadastrado no rebanho.")
     else:
         contagem_lotes = df_raw['lote'].value_counts().to_dict()
-        cols_kpi = st.columns(len(contagem_lotes))
-        for i, (lote, qtd) in enumerate(contagem_lotes.items()):
-            if i < 6: cols_kpi[i].metric(f"Lote {lote}", f"{qtd} animais")
+        cols_kpi = st.columns(len(contagem_lotes)) if len(contagem_lotes) > 0 else [st.container()]
+        
+        if len(contagem_lotes) > 0:
+            for i, (lote, qtd) in enumerate(contagem_lotes.items()):
+                if i < 6: cols_kpi[i].metric(f"Lote {lote}", f"{qtd} animais")
+        
         st.divider()
 
         with st.container(border=True):
-            st.markdown("#### 🔍 Filtros")
+            st.markdown("#### 🔍 Filtros e Edição")
             c_filtro1, c_filtro2, c_filtro3, c_busca = st.columns([1, 1, 1, 2])
             
             opcoes_status = df_raw['status'].unique().tolist() if not df_raw.empty else []
@@ -893,10 +951,9 @@ elif menu == "🐄 Rebanho Geral":
             filtro_lote = c_filtro2.multiselect("Lote:", options=opcoes_lote)
             
             filtro_prenhez = c_filtro3.radio("Prenhez:", ["Todos", "Prenhes", "Vazias"], horizontal=True)
-            texto_busca = c_busca.text_input("🔎 Buscar")
+            texto_busca = c_busca.text_input("🔎 Buscar (Nome ou Brinco)")
             
-            colunas_padrao = ["id", "nome", "status", "lote", "freq", "prenhez", "mae_id"]
-            # TRAVA DE SEGURANÇA: Só permite selecionar colunas que REALMENTE existem no banco
+            colunas_padrao = ["id", "nome", "status", "lote", "freq", "prenhez", "dt_parto", "dt_insem"]
             cols_presentes = list(df_raw.columns)
             defaults_validos = [c for c in colunas_padrao if c in cols_presentes]
             
@@ -910,68 +967,80 @@ elif menu == "🐄 Rebanho Geral":
         if texto_busca:
             df_view = df_view[df_view['nome'].str.contains(texto_busca, case=False, na=False) | df_view['id'].str.contains(texto_busca, case=False, na=False)]
 
+        # Conversão de datas para o editor funcionar
         for col in ['dt_parto', 'dt_insem', 'nasc']:
-            if col in df_view.columns: df_view[col] = pd.to_datetime(df_view[col])
+            if col in df_view.columns: 
+                df_view[col] = pd.to_datetime(df_view[col], errors='coerce')
 
         lista_maes = df_raw[df_raw['sexo'] == 'Fêmea']['id'].unique().tolist()
         lista_maes.insert(0, None)
 
         st.caption(f"Mostrando {len(df_view)} animais.")
+        
+        # Editor blindado
         df_editado = st.data_editor(
-            df_view[cols_selecionadas],
+            df_view,
             column_config={
-                "doc_id": None,
+                "doc_id": None, # Esconde ID do Firebase
                 "id": st.column_config.TextColumn("Brinco (ID)", required=True, width="small"),
                 "nome": st.column_config.TextColumn("Nome", required=True),
-                "status": st.column_config.SelectboxColumn("Status", options=["Lactação", "Seca", "Bezerro", "Novilha", "Garrote"]),
+                "status": st.column_config.SelectboxColumn("Status", options=["Lactação", "Seca", "Bezerro", "Novilha", "Garrote", "Touro"]),
                 "lote": st.column_config.SelectboxColumn("Lote", options=["A", "B", "C", "Maternidade", "Berçário", "Geral", "Recria", "Engorda"]),
                 "freq": st.column_config.NumberColumn("Ord/Dia", min_value=0, max_value=3),
                 "sexo": st.column_config.SelectboxColumn("Sexo", options=["Fêmea", "Macho"]),
                 "mae_id": st.column_config.SelectboxColumn("Mãe (ID)", options=lista_maes),
-                "dt_parto": st.column_config.DateColumn("Último Parto", format="YYYY-MM-DD"),
-                "dt_insem": st.column_config.DateColumn("Insem", format="YYYY-MM-DD"),
-                "nasc": st.column_config.DateColumn("Nascimento", format="YYYY-MM-DD"),
+                "dt_parto": st.column_config.DateColumn("Último Parto", format="DD/MM/YYYY"),
+                "dt_insem": st.column_config.DateColumn("Insem", format="DD/MM/YYYY"),
+                "nasc": st.column_config.DateColumn("Nascimento", format="DD/MM/YYYY"),
                 "prenhez": st.column_config.CheckboxColumn("Prenhe?"),
                 "colostro": st.column_config.CheckboxColumn("Colostro?")
             },
-            use_container_width=True, num_rows="dynamic", hide_index=True, key="editor_blindado"
+            use_container_width=True, 
+            num_rows="dynamic", 
+            hide_index=True, 
+            key="editor_blindado"
         )
 
-        if st.button("💾 Salvar Alterações Seguras"):
+        if st.button("💾 Salvar Alterações na Tabela"):
             recs = df_editado.to_dict('records')
+            # Tratamento de datas antes de enviar pro Firebase
             for r in recs:
                 for date_col in ['dt_parto', 'dt_insem', 'nasc']:
-                    if isinstance(r.get(date_col), (pd.Timestamp, datetime.date)):
-                        r[date_col] = r[date_col].strftime('%Y-%m-%d')
+                    val = r.get(date_col)
+                    if pd.isnull(val):
+                        r[date_col] = None
+                    elif isinstance(val, (pd.Timestamp, datetime.date, datetime.datetime)):
+                        r[date_col] = val.strftime('%Y-%m-%d')
             
             salvar_lote_dataframe("animais", recs)
-            st.success("Dados salvos!")
+            st.success("Dados salvos e sincronizados com a nuvem!")
 
-        st.divider()
-        st.markdown("#### 💲 Venda de Animais")
-        with st.expander("Realizar Venda"):
-            animais_venda = [a for a in st.session_state.db["animais"] if a['status'] != 'Bezerro']
-            if animais_venda:
-                ops_venda = {a['id']: f"{a['nome']} ({a['status']})" for a in animais_venda}
-                c_v1, c_v2, c_v3 = st.columns(3)
-                v_animal_id = c_v1.selectbox("Animal:", list(ops_venda.keys()), format_func=lambda x: f"{x} - {ops_venda[x]}")
-                v_valor = c_v2.number_input("Valor (R$):", min_value=0.0, step=100.0)
-                v_motivo = c_v3.text_input("Motivo", "Descarte")
+    st.divider()
+    st.markdown("#### 💲 Venda de Animais")
+    with st.expander("Realizar Venda (Baixa no Estoque)"):
+        animais_venda = [a for a in st.session_state.db["animais"] if a['status'] != 'Bezerro']
+        if animais_venda:
+            ops_venda = {a['id']: f"{a['nome']} ({a['status']})" for a in animais_venda}
+            c_v1, c_v2, c_v3 = st.columns(3)
+            v_animal_id = c_v1.selectbox("Animal:", list(ops_venda.keys()), format_func=lambda x: f"{x} - {ops_venda[x]}")
+            v_valor = c_v2.number_input("Valor (R$):", min_value=0.0, step=100.0)
+            v_motivo = c_v3.text_input("Motivo", "Descarte")
+            
+            if st.button("CONFIRMAR VENDA", type="primary"):
+                animal_obj = next((a for a in animais_venda if a['id'] == v_animal_id), None)
                 
-                if st.button("CONFIRMAR VENDA", type="primary"):
-                    # Busca animal selecionado
-                    animal_obj = next((a for a in animais_venda if a['id'] == v_animal_id), None)
-                    
+                if animal_obj:
                     adicionar_item("financeiro", {
                         "data": str(datetime.date.today()), "cat": "Venda de Animais", 
                         "desc": f"Venda {ops_venda[v_animal_id]} - {v_motivo}", "valor": v_valor, 
                         "tipo": "Receita", "animal": v_animal_id
                     })
                     deletar_item("animais", animal_obj['doc_id'])
-                    st.success(f"Vendido!")
+                    st.success(f"Vendido! O valor entrou no caixa.")
+                    time.sleep(1)
                     st.rerun()
-            else:
-                st.info("Sem animais disponíveis.")
+        else:
+            st.info("Sem animais disponíveis para venda.")
 
 # ==============================================================================
 # MÓDULO 8: CALENDÁRIO & AGENDA
@@ -1086,3 +1155,4 @@ elif menu == "⚙️ Configurações":
     if st.button("APAGAR TUDO (Reset de Fábrica)", type="primary"):
 
         limpar_banco_completo()
+
