@@ -1157,93 +1157,135 @@ elif menu == "📅 Calendário & Agenda":
                                     st.caption(f"{ev['icon']} {ev['animal']}")
                                     st.markdown(f"<span style='color:{ev['cor']}; font-size:0.8em;'>{ev['tipo']}</span>", unsafe_allow_html=True)
 # ==============================================================================
-# MÓDULO: CONTROLE DE ORDENHA (NOVO)
+# MÓDULO: CONTROLE DE ORDENHA (ATUALIZADO - LISTA COMPLETA E PROGRESSO)
 # ==============================================================================
 elif menu == "🥛 Controle de Ordenha":
     st.title("🥛 Controle Diário de Ordenha")
-    st.markdown("Acompanhe em detalhes o que aconteceu hoje no curral (integração com App Fazenda).")
+    st.markdown("Monitoramento em tempo real do manejo diário (Integração Fazenda).")
     
-    # Filtro de Data
-    data_analise = st.date_input("Selecione a Data para Análise:", datetime.date.today())
+    # 1. Filtro de Data
+    col_d1, col_d2 = st.columns([1, 3])
+    data_analise = col_d1.date_input("Data:", datetime.date.today())
     str_data = str(data_analise)
     
-    # Pega os dados de produção da memória (vindos do Firebase)
-    df_prod = pd.DataFrame(st.session_state.db["producao"])
+    # 2. Preparação dos Dados
+    # Pega TODAS as vacas em lactação (o universo esperado)
+    todas_vacas = [v for v in st.session_state.db["animais"] if v['status'] == 'Lactação']
     
+    # Pega produção de HOJE
+    df_prod = pd.DataFrame(st.session_state.db["producao"])
     if not df_prod.empty:
-        # Filtra pela data selecionada
-        # Garante que a coluna 'data' seja string para comparar
         df_prod['data'] = df_prod['data'].astype(str)
-        df_dia = df_prod[df_prod['data'] == str_data]
+        df_hoje = df_prod[df_prod['data'] == str_data]
         
-        if not df_dia.empty:
-            # Lista de animais que passaram pelo curral nesse dia
-            animais_presentes = df_dia['id_animal'].unique()
-            
-            # Métricas Gerais do Dia
-            total_leite_dia = df_dia['leite'].sum()
-            total_racao_dia = df_dia['racao'].sum()
-            
-            c_m1, c_m2, c_m3 = st.columns(3)
-            c_m1.metric("Vacas Ordenhadas", len(animais_presentes))
-            c_m2.metric("Total Leite Dia", f"{total_leite_dia:.2f} L")
-            c_m3.metric("Ração Consumida", f"{total_racao_dia:.2f} kg")
-            
-            st.divider()
-            st.markdown("### 🔎 Detalhamento por Animal")
-            
-            for animal_id in animais_presentes:
-                # Filtra os dados apenas dessa vaca
-                df_cow = df_dia[df_dia['id_animal'] == animal_id]
-                
-                # Tenta pegar o nome (se não tiver na produção, tenta buscar na lista de animais)
-                if 'nome_animal' in df_cow.columns:
-                    nome = df_cow['nome_animal'].iloc[0]
-                else:
-                    nome = f"ID {animal_id}"
-                
-                # Calcula totais individuais
-                comparecimentos = len(df_cow)
-                total_leite_vaca = df_cow['leite'].sum()
-                total_racao_vaca = df_cow['racao'].sum()
-                
-                # Calcula por turno (assumindo 1=Manhã, 2=Tarde, 3=Noite)
-                leite_manha = df_cow[df_cow['turno'] == 1]['leite'].sum()
-                leite_tarde = df_cow[df_cow['turno'] == 2]['leite'].sum()
-                leite_noite = df_cow[df_cow['turno'] == 3]['leite'].sum()
-                
-                # Exibe o Card da Vaca
-                with st.container(border=True):
-                    col_info, col_detalhes = st.columns([2, 3])
-                    
-                    with col_info:
-                        st.subheader(f"🐄 {nome}")
-                        st.caption(f"Brinco: {animal_id}")
-                        st.markdown(f"""
-                        **Resumo do Dia:**
-                        - Compareceu ao curral: **{comparecimentos} vezes**
-                        - Comeu: **{total_racao_vaca:.2f} kg** de ração
-                        - Produziu: **{total_leite_vaca:.2f} L** no total
-                        """)
-                        
-                    with col_detalhes:
-                        st.markdown("**Produção por Turno:**")
-                        c_t1, c_t2, c_t3 = st.columns(3)
-                        
-                        # Formatação condicional visual
-                        cor_m = "normal" if leite_manha > 0 else "off"
-                        cor_t = "normal" if leite_tarde > 0 else "off"
-                        cor_n = "normal" if leite_noite > 0 else "off"
-
-                        c_t1.metric("🌞 Manhã (T1)", f"{leite_manha:.1f} L", delta_color=cor_m)
-                        c_t2.metric("🌤️ Tarde (T2)", f"{leite_tarde:.1f} L", delta_color=cor_t)
-                        c_t3.metric("🌙 Noite (T3)", f"{leite_noite:.1f} L", delta_color=cor_n)
-
-        else:
-            st.warning(f"⚠️ Nenhum registro de ordenha encontrado para o dia {data_analise.strftime('%d/%m/%Y')}.")
-            st.info("Aguardando sincronização do aplicativo da fazenda...")
+        # Pega produção de ONTEM (para calcular a meta de ração)
+        data_ontem = str(data_analise - datetime.timedelta(days=1))
+        df_ontem = df_prod[df_prod['data'] == data_ontem]
     else:
-        st.info("O banco de dados de produção está vazio. Realize a primeira ordenha no app da Fazenda.")
+        df_hoje = pd.DataFrame()
+        df_ontem = pd.DataFrame()
+
+    # Métricas do Topo
+    total_leite = df_hoje['leite'].sum() if not df_hoje.empty else 0.0
+    total_racao = df_hoje['racao'].sum() if not df_hoje.empty else 0.0
+    vacas_ordenhadas = len(df_hoje['id_animal'].unique()) if not df_hoje.empty else 0
+    total_esperado = len(todas_vacas)
+    
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Progresso Rebanho", f"{vacas_ordenhadas}/{total_esperado} Vacas")
+    k2.metric("Leite Captado", f"{total_leite:.1f} L")
+    k3.metric("Ração Ofertada", f"{total_racao:.1f} kg")
+    
+    # Barra de progresso geral do dia (animais atendidos)
+    progresso_geral = vacas_ordenhadas / total_esperado if total_esperado > 0 else 0
+    st.progress(progresso_geral, text=f"Cobertura do Rebanho: {int(progresso_geral*100)}%")
+    
+    st.divider()
+    
+    if not todas_vacas:
+        st.info("Nenhuma vaca em lactação cadastrada no rebanho.")
+    else:
+        st.markdown("### 🐄 Detalhamento Individual")
+        
+        # Loop por CADA VACA (mesmo as que não foram ordenhadas)
+        for vaca in todas_vacas:
+            vaca_id = vaca['id']
+            vaca_nome = vaca['nome']
+            freq_esperada = int(vaca.get('freq', 2)) # Ex: 2 ordenhas
+            
+            # Dados de Hoje dessa vaca
+            if not df_hoje.empty:
+                dados_vaca = df_hoje[df_hoje['id_animal'] == vaca_id]
+            else:
+                dados_vaca = pd.DataFrame()
+            
+            # --- CÁLCULOS DE ORDENHA ---
+            qtd_realizada = len(dados_vaca)
+            leite_manha = dados_vaca[dados_vaca['turno'] == 1]['leite'].sum() if not dados_vaca.empty else 0
+            leite_tarde = dados_vaca[dados_vaca['turno'] == 2]['leite'].sum() if not dados_vaca.empty else 0
+            leite_total = dados_vaca['leite'].sum() if not dados_vaca.empty else 0
+            
+            # Status Visual
+            if qtd_realizada == 0:
+                status_icon = "🔴" # Nada feito
+                status_txt = "Pendente"
+            elif qtd_realizada < freq_esperada:
+                status_icon = "🟡" # Parcial
+                status_txt = "Em andamento"
+            else:
+                status_icon = "🟢" # Concluído
+                status_txt = "Finalizado"
+
+            # --- CÁLCULOS DE NUTRIÇÃO (META) ---
+            racao_consumida = dados_vaca['racao'].sum() if not dados_vaca.empty else 0
+            
+            # Calcula a META com base na produção de ontem (Igual ao app da Fazenda)
+            # Lógica: (LeiteOntem - 4L) / 3. Se não tiver ontem, usa média de 15L.
+            prod_ontem = 15.0
+            if not df_ontem.empty:
+                reg_ontem = df_ontem[df_ontem['id_animal'] == vaca_id]
+                if not reg_ontem.empty:
+                    prod_ontem = reg_ontem['leite'].sum()
+            
+            # Fórmula da Dieta (Mesma do fazenda.py)
+            meta_racao = (prod_ontem - 4.0) / 3.0
+            if meta_racao < 0.5: meta_racao = 0.5
+            
+            # Cálculo % Nutrição
+            pct_nutricao = racao_consumida / meta_racao if meta_racao > 0 else 0
+            if pct_nutricao > 1.0: pct_nutricao = 1.0
+            
+            # --- RENDERIZAÇÃO DO CARD ---
+            with st.container(border=True):
+                c_head, c_prod, c_nutri = st.columns([1.5, 2, 2])
+                
+                with c_head:
+                    st.markdown(f"**{vaca_nome}** ({vaca_id})")
+                    st.caption(f"{status_icon} **{qtd_realizada}/{freq_esperada}** Ordenhas")
+                    if qtd_realizada < freq_esperada:
+                        st.markdown(f":red[Faltam {freq_esperada - qtd_realizada}]")
+                
+                with c_prod:
+                    # Exibição compacta dos turnos
+                    col_m, col_t = st.columns(2)
+                    
+                    lbl_m = f"**{leite_manha:.1f} L**" if leite_manha > 0 else "---"
+                    lbl_t = f"**{leite_tarde:.1f} L**" if leite_tarde > 0 else "---"
+                    
+                    col_m.markdown(f"🌞 Manhã: {lbl_m}")
+                    col_t.markdown(f"🌤️ Tarde: {lbl_t}")
+                    
+                    st.markdown(f"🥛 **Total: {leite_total:.1f} L**")
+
+                with c_nutri:
+                    # Barra de Nutrição Personalizada
+                    cor_barra = "green"
+                    if pct_nutricao < 0.5: cor_barra = "red"
+                    elif pct_nutricao < 0.9: cor_barra = "orange"
+                    
+                    st.markdown(f"🥣 **Nutrição:** {racao_consumida:.1f}kg / {meta_racao:.1f}kg")
+                    st.progress(pct_nutricao)
+                    st.caption(f"{int(pct_nutricao*100)}% da dieta consumida")
 
 # ==============================================================================
 # MÓDULO 9: CONFIGURAÇÕES (RESET)
@@ -1258,6 +1300,7 @@ elif menu == "⚙️ Configurações":
     if st.button("APAGAR TUDO (Reset de Fábrica)", type="primary"):
 
         limpar_banco_completo()
+
 
 
 
