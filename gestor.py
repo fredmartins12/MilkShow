@@ -39,11 +39,30 @@ def init_firebase():
     """Inicializa a conexão com o Firebase (Singleton)"""
     if not firebase_admin._apps:
         try:
-            cred = credentials.Certificate("firebase_key.json")
-            firebase_admin.initialize_app(cred)
+            # 1. Tenta carregar dos Segredos do Streamlit (Nuvem)
+            if "FIREBASE_KEY" in st.secrets:
+                key_content = st.secrets["FIREBASE_KEY"]
+                # Se for string JSON, converte para dict
+                if isinstance(key_content, str):
+                    key_dict = json.loads(key_content)
+                else:
+                    key_dict = key_content
+                cred = credentials.Certificate(key_dict)
+                firebase_admin.initialize_app(cred)
+            
+            # 2. Se não tiver segredo, tenta arquivo local (PC)
+            elif os.path.exists("firebase_key.json"):
+                cred = credentials.Certificate("firebase_key.json")
+                firebase_admin.initialize_app(cred)
+            
+            else:
+                st.error("❌ Chave do Firebase não encontrada! Configure os 'Secrets' na nuvem ou coloque o arquivo json localmente.")
+                st.stop()
+            
         except Exception as e:
-            st.error(f"Erro crítico: Não foi possível conectar ao Firebase. Verifique o arquivo 'firebase_key.json'. Detalhes: {e}")
+            st.error(f"Erro crítico na conexão Firebase: {e}")
             st.stop()
+            
     return firestore.client()
 
 # Inicializa o banco
@@ -1065,4 +1084,5 @@ elif menu == "⚙️ Configurações":
     st.warning("Atenção: Esta ação é irreversível. Todos os animais, financeiro e estoque serão apagados.")
     
     if st.button("APAGAR TUDO (Reset de Fábrica)", type="primary"):
+
         limpar_banco_completo()
