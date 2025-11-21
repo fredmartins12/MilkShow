@@ -34,6 +34,8 @@ TIPOS_SANITARIOS = ["Vacina", "Vermífugo", "Antibiótico", "Hormônio", "Casque
 
 # --- 1. CONEXÃO E GERENCIAMENTO FIREBASE ---
 
+# --- 1. CONEXÃO E GERENCIAMENTO FIREBASE (CORRIGIDO) ---
+
 @st.cache_resource
 def init_firebase():
     """Inicializa a conexão com o Firebase (Singleton)"""
@@ -41,12 +43,23 @@ def init_firebase():
         try:
             # 1. Tenta carregar dos Segredos do Streamlit (Nuvem)
             if "FIREBASE_KEY" in st.secrets:
-                key_content = st.secrets["FIREBASE_KEY"]
-                # Se for string JSON, converte para dict
-                if isinstance(key_content, str):
-                    key_dict = json.loads(key_content)
+                val = st.secrets["FIREBASE_KEY"]
+                
+                # CORREÇÃO: Se o Streamlit devolver como Texto (String), converte para Dicionário
+                if isinstance(val, str):
+                    import json
+                    # Tenta converter string JSON para dicionário Python
+                    # Se tiver aspas simples, substitui por duplas para ficar JSON válido
+                    val = val.replace("'", '"') 
+                    key_dict = json.loads(val)
                 else:
-                    key_dict = key_content
+                    # Se já for um objeto (caso do formato TOML correto), apenas converte para dict
+                    key_dict = dict(val)
+
+                # CORREÇÃO 2: Garante que as quebras de linha da chave privada sejam lidas corretamente
+                if "private_key" in key_dict:
+                    key_dict["private_key"] = key_dict["private_key"].replace("\\n", "\n")
+
                 cred = credentials.Certificate(key_dict)
                 firebase_admin.initialize_app(cred)
             
@@ -56,7 +69,7 @@ def init_firebase():
                 firebase_admin.initialize_app(cred)
             
             else:
-                st.error("❌ Chave do Firebase não encontrada! Configure os 'Secrets' na nuvem ou coloque o arquivo json localmente.")
+                st.error("❌ Chave do Firebase não encontrada! Configure os 'Secrets' na nuvem.")
                 st.stop()
             
         except Exception as e:
@@ -64,14 +77,6 @@ def init_firebase():
             st.stop()
             
     return firestore.client()
-
-# Inicializa o banco
-try:
-    db_firestore = init_firebase()
-except Exception as e:
-    st.error("Erro ao iniciar Firebase. Verifique se o arquivo json da chave está na pasta.")
-    st.stop()
-
 # --- FUNÇÕES DE CRUD (CREATE, READ, UPDATE, DELETE) ---
 
 def carregar_dados_firestore():
@@ -1160,5 +1165,6 @@ elif menu == "⚙️ Configurações":
     if st.button("APAGAR TUDO (Reset de Fábrica)", type="primary"):
 
         limpar_banco_completo()
+
 
 
