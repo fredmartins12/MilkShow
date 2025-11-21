@@ -78,7 +78,11 @@ def init_firebase():
             
     return firestore.client()
 # --- FUNÇÕES DE CRUD (CREATE, READ, UPDATE, DELETE) ---
-
+try:
+    db_firestore = init_firebase() # <--- ESSA É A LINHA QUE ESTAVA FALTANDO
+except Exception as e:
+    st.error(f"Erro ao iniciar Firebase: {e}")
+    st.stop()
 def carregar_dados_firestore():
     """Carrega todas as coleções do Firestore para o Session State (Cache Local)"""
     if 'db' not in st.session_state:
@@ -1165,6 +1169,7 @@ elif menu == "⚙️ Configurações":
     if st.button("APAGAR TUDO (Reset de Fábrica)", type="primary"):
 
         limpar_banco_completo()
+
 
 
 
