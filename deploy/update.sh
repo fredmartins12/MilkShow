@@ -1,24 +1,33 @@
 #!/bin/bash
 # =============================================================
-# MilkShow — Atualiza código no servidor sem derrubar o serviço
-# Uso: bash update.sh
+# MilkShow — Atualiza código no servidor
+# Uso: bash /opt/milkshow/deploy/update.sh
 # =============================================================
 set -e
 
 APP_DIR="/opt/milkshow"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "Atualizando código..."
-rsync -av --exclude='deploy/' --exclude='__pycache__' --exclude='*.pyc' \
-    --exclude='.git' --exclude='bot_log.txt' --exclude='.env' \
-    --exclude='firebase_key.json' \
-    "$SCRIPT_DIR/../" "$APP_DIR/"
+echo "================================================="
+echo " MilkShow — Atualizando servidor"
+echo "================================================="
 
-echo "Reinstalando dependências (se mudou requirements.txt)..."
+echo "[1/4] Baixando código novo do GitHub..."
+git -C "$APP_DIR" pull
+
+echo "[2/4] Atualizando dependências Python..."
+"$APP_DIR/venv/bin/pip" install --quiet --upgrade pip
 "$APP_DIR/venv/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
 
-echo "Reiniciando bot..."
-sudo systemctl restart milkshow-bot
+echo "[3/4] Atualizando Evolution API..."
+cp "$APP_DIR/.env" "$APP_DIR/deploy/.env"
+cd "$APP_DIR/deploy" && docker compose pull --quiet && docker compose up -d
 
-echo "Pronto! Status:"
-sudo systemctl status milkshow-bot --no-pager
+echo "[4/4] Reiniciando bot..."
+systemctl restart milkshow-bot
+sleep 2
+systemctl status milkshow-bot --no-pager
+
+echo ""
+echo "================================================="
+echo " Atualização concluída!"
+echo "================================================="

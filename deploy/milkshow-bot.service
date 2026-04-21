@@ -5,7 +5,7 @@ Requires=docker.service
 
 [Service]
 Type=simple
-User=ubuntu
+User=root
 WorkingDirectory=/opt/milkshow
 EnvironmentFile=/opt/milkshow/.env
 

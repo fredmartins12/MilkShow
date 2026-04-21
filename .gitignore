@@ -3,3 +3,9 @@ firebase_key.json
 __pycache__/
 *.pyc
 .env
+bot_log.txt
+.claude/
+deploy/.env
+*.key
+*.pem
+

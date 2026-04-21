@@ -1,9 +1,25 @@
 version: "3.8"
 
-# Evolution API + Redis
+# Evolution API + Redis + PostgreSQL
 # MilkShow bot roda como serviço systemd (fora do Docker)
 
 services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: milkshow_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: evolution
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: evolution123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
@@ -24,15 +40,29 @@ services:
     ports:
       - "8080:8080"
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     environment:
       # — Servidor —
-      SERVER_URL: "${EVOLUTION_PUBLIC_URL}"        # ex: https://seudominio.com
+      SERVER_URL: "${EVOLUTION_PUBLIC_URL}"
       # — Autenticação —
       AUTHENTICATION_TYPE: apikey
-      AUTHENTICATION_API_KEY: "${EVOLUTION_KEY}"  # sua chave de acesso
+      AUTHENTICATION_API_KEY: "${EVOLUTION_KEY}"
       AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "true"
+      # — Banco de dados —
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: "postgresql"
+      DATABASE_CONNECTION_URI: "postgresql://evolution:evolution123@postgres:5432/evolution"
+      DATABASE_CONNECTION_CLIENT_NAME: "evolution_client"
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
+      DATABASE_SAVE_MESSAGE_UPDATE: "true"
+      DATABASE_SAVE_DATA_CONTACTS: "true"
+      DATABASE_SAVE_DATA_CHATS: "true"
+      DATABASE_SAVE_DATA_LABELS: "true"
+      DATABASE_SAVE_DATA_HISTORIC: "true"
       # — Redis —
       CACHE_REDIS_ENABLED: "true"
       CACHE_REDIS_URI: "redis://redis:6379/6"
@@ -59,6 +89,7 @@ services:
       - evolution_store:/evolution/store
 
 volumes:
+  postgres_data:
   redis_data:
   evolution_data:
   evolution_store:
