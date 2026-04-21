@@ -2,3 +2,18 @@ streamlit
 pandas
 plotly
 firebase-admin
+numpy
+openpyxl
+fpdf2
+twilio
+qrcode[pil]
+Pillow
+scikit-learn
+# WhatsApp Bot
+fastapi
+uvicorn[standard]
+httpx
+anthropic
+openai
+python-dotenv
+python-multipart

@@ -1,0 +1,17 @@
+{
+  "name": "MilkShow Campo",
+  "short_name": "MilkShow",
+  "description": "Registro de ordenha mobile-friendly",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#070e08",
+  "theme_color": "#43a047",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "https://em-content.zobj.net/source/twitter/376/cow_1f404.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}

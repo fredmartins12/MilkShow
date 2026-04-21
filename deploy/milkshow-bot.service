@@ -1,0 +1,28 @@
+[Unit]
+Description=MilkShow WhatsApp Bot
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/milkshow
+EnvironmentFile=/opt/milkshow/.env
+
+ExecStart=/opt/milkshow/venv/bin/uvicorn whatsapp_bot:app \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --workers 2 \
+    --log-level info
+
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/milkshow/bot.log
+StandardError=append:/var/log/milkshow/bot.log
+
+# Limites de segurança
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
