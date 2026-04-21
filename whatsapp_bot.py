@@ -35,7 +35,7 @@ import logging
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, Form, Response, Request
+from fastapi import FastAPI, Form, Response, Request, Header, HTTPException
 import firebase_admin
 from firebase_admin import credentials, firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
@@ -43,7 +43,20 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("milkshow_bot")
 
-app = FastAPI(title="MilkShow WhatsApp Bot", version="1.0")
+app = FastAPI(title="MilkShow WhatsApp Bot", version="1.0", docs_url=None, redoc_url=None)
+
+# Token interno para proteger endpoints administrativos
+# Defina BOT_ADMIN_TOKEN no .env — se não definido, endpoints admin ficam desabilitados
+_ADMIN_TOKEN = os.environ.get("BOT_ADMIN_TOKEN", "")
+
+def _verificar_admin(authorization: str = Header(default="")):
+    """Valida Bearer token para endpoints administrativos."""
+    if not _ADMIN_TOKEN:
+        raise HTTPException(status_code=503, detail="Admin token não configurado")
+    token = authorization.replace("Bearer ", "").strip()
+    if token != _ADMIN_TOKEN:
+        raise HTTPException(status_code=401, detail="Não autorizado")
+
 
 # ─────────────────────────────────────────────
 # FIREBASE
@@ -1883,7 +1896,9 @@ def raiz():
 
 
 @app.get("/status")
-def status():
+def status(authorization: str = Header(default="")):
+    """Status do bot — requer token admin."""
+    _verificar_admin(authorization)
     try:
         _db()
         firebase_ok = True
@@ -1898,8 +1913,9 @@ def status():
 
 
 @app.post("/disparar_alertas")
-def disparar_alertas():
+def disparar_alertas(authorization: str = Header(default="")):
     """Dispara alertas proativos imediatamente para todos os números cadastrados."""
+    _verificar_admin(authorization)
     registros = _todos_telefones()
     resultado = []
     for reg in registros:
@@ -1915,8 +1931,9 @@ def disparar_alertas():
 
 
 @app.post("/relatorio_semanal")
-def relatorio_semanal():
+def relatorio_semanal(authorization: str = Header(default="")):
     """Dispara relatório semanal imediatamente para todos os números cadastrados."""
+    _verificar_admin(authorization)
     registros = _todos_telefones()
     resultado = []
     for reg in registros:
@@ -1932,6 +1949,14 @@ async def webhook_evolution(request: Request):
     """Webhook da Evolution API (self-hosted, grátis).
     Configure no painel Evolution: POST https://seu-dominio/webhook/evolution
     """
+    # Valida apikey enviada pela Evolution no header
+    ev_key = os.environ.get("EVOLUTION_KEY", "")
+    if ev_key:
+        apikey_header = request.headers.get("apikey", "")
+        if apikey_header != ev_key:
+            log.warning("webhook/evolution: apikey inválida — requisição bloqueada")
+            return {"ok": True}  # retorna 200 para não revelar que foi bloqueado
+
     try:
         body = await request.json()
     except Exception:

@@ -12,7 +12,7 @@ services:
     environment:
       POSTGRES_DB: evolution
       POSTGRES_USER: evolution
-      POSTGRES_PASSWORD: evolution123
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -54,7 +54,7 @@ services:
       # — Banco de dados —
       DATABASE_ENABLED: "true"
       DATABASE_PROVIDER: "postgresql"
-      DATABASE_CONNECTION_URI: "postgresql://evolution:evolution123@postgres:5432/evolution"
+      DATABASE_CONNECTION_URI: "postgresql://evolution:${POSTGRES_PASSWORD}@postgres:5432/evolution"
       DATABASE_CONNECTION_CLIENT_NAME: "evolution_client"
       DATABASE_SAVE_DATA_INSTANCE: "true"
       DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
