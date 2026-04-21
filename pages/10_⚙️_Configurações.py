@@ -101,18 +101,59 @@ def _normalizar_tel(numero: str) -> str:
     return '55' + digits
 
 
-def _registrar_telefone(tel_limpo: str, fazenda_id: str = 'default'):
-    """Salva o mapeamento telefone → fazenda no Firestore global."""
+PERMISSOES_OPCOES = {
+    "admin":      "Acesso Total",
+    "ordenha":    "Ordenha",
+    "rebanho":    "Rebanho",
+    "financeiro": "Financeiro",
+    "armazem":    "Armazém",
+}
+
+
+def _registrar_telefone(tel_limpo: str, fazenda_id: str = 'default',
+                        nome: str = '', permissoes: list = None):
+    """Salva mapeamento telefone → fazenda + permissões no Firestore global."""
     try:
         db = firestore.client()
         db.collection('registros_tel').document(tel_limpo).set({
             'fazenda_id': fazenda_id,
-            'ativo': True,
-            'ts': datetime.datetime.now().isoformat(),
+            'ativo':      True,
+            'nome':       nome,
+            'permissoes': permissoes or ['admin'],
+            'ts':         datetime.datetime.now().isoformat(),
         })
         return True
     except Exception as e:
         st.error(f"Erro ao registrar: {e}")
+        return False
+
+
+def _listar_usuarios(fazenda_id: str = 'default') -> list:
+    """Retorna todos os números cadastrados para esta fazenda."""
+    try:
+        db = firestore.client()
+        docs = db.collection('registros_tel').where('fazenda_id', '==', fazenda_id).stream()
+        usuarios = []
+        for d in docs:
+            data = d.to_dict()
+            if data.get('ativo', True):
+                usuarios.append({
+                    'tel': d.id,
+                    'nome': data.get('nome', ''),
+                    'permissoes': data.get('permissoes', ['admin']),
+                    'ts': data.get('ts', '')[:10],
+                })
+        return sorted(usuarios, key=lambda x: x['ts'])
+    except Exception:
+        return []
+
+
+def _remover_usuario(tel: str):
+    try:
+        firestore.client().collection('registros_tel').document(tel).update({'ativo': False})
+        return True
+    except Exception as e:
+        st.error(f"Erro: {e}")
         return False
 
 
@@ -131,56 +172,101 @@ def _historico_bot():
 # ══════════════════════════════════════════════
 with tab_bot:
 
-    # ── Seção 1: Cadastro do número ───────────
+    # ── Seção 1: Usuários do Bot ──────────────
     with st.container(border=True):
-        st.markdown("#### Seu número do WhatsApp")
+        st.markdown("#### Usuários do Bot WhatsApp")
         st.caption(
-            "Informe o número que você usa no WhatsApp. "
-            "Quando você enviar uma mensagem para o número do MilkShow, "
-            "o sistema identifica automaticamente que é você e salva os dados na sua fazenda."
+            "Cadastre os números que podem usar o bot. "
+            "Cada usuário tem permissões específicas — o gestor pode personalizar o que cada um acessa."
         )
 
-        tel_salvo = get_config('telefone_wpp', '')
-        tel_exibir = tel_salvo[2:] if tel_salvo.startswith('55') else tel_salvo  # remove 55 pra exibir
+        fazenda_id = st.session_state.get('fazenda_id', 'default')
+        usuarios   = _listar_usuarios(fazenda_id)
 
-        col_tel, col_status = st.columns([3, 1])
-        with col_tel:
-            novo_tel = st.text_input(
-                "Número (somente dígitos, com DDD):",
-                value=tel_exibir,
-                placeholder="77981258479",
-                help="Digite apenas números. Exemplo: 77981258479",
-            )
-        with col_status:
-            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-            if tel_salvo:
-                st.markdown(
-                    f"<div style='background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.25);"
-                    f"border-radius:8px;padding:8px 12px;font-size:0.84em;color:#6ee7b7;'>"
-                    f"Ativo: +{tel_salvo}</div>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown(
-                    "<div style='background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);"
-                    "border-radius:8px;padding:8px 12px;font-size:0.84em;color:#fcd34d;'>"
-                    "Sem número cadastrado</div>",
-                    unsafe_allow_html=True,
-                )
+        # Tabela de usuários existentes
+        if usuarios:
+            for u in usuarios:
+                perms_labels = [PERMISSOES_OPCOES.get(p, p) for p in u['permissoes']]
+                col_info, col_perms, col_del = st.columns([3, 4, 1])
+                with col_info:
+                    nome_fmt = f"**{u['nome']}**  " if u['nome'] else ""
+                    tel_fmt  = u['tel']
+                    if len(tel_fmt) > 4:
+                        ddd   = tel_fmt[2:4]
+                        resto = tel_fmt[4:]
+                        tel_fmt = f"({ddd}) {resto[:5]}-{resto[5:]}" if len(resto) >= 9 else tel_fmt
+                    st.markdown(f"{nome_fmt}`+{tel_fmt}`")
+                with col_perms:
+                    badges = " ".join(
+                        f"<span style='background:rgba(59,130,246,0.15);border-radius:5px;"
+                        f"padding:2px 8px;font-size:0.78em;color:#93c5fd;'>{p}</span>"
+                        for p in perms_labels
+                    )
+                    st.markdown(badges, unsafe_allow_html=True)
+                with col_del:
+                    if st.button("✕", key=f"del_{u['tel']}", help="Remover usuário"):
+                        if _remover_usuario(u['tel']):
+                            st.success("Removido!")
+                            time.sleep(0.5)
+                            st.rerun()
+            st.divider()
+        else:
+            st.info("Nenhum usuário cadastrado ainda.")
+            st.divider()
 
-        if st.button("Salvar número", type="primary"):
-            if novo_tel:
-                tel_clean = _normalizar_tel(novo_tel)
-                if len(tel_clean) < 12 or len(tel_clean) > 14:
-                    st.error("Número inválido. Inclua DDD + número (ex: 77981258479).")
+        # Formulário para adicionar novo usuário
+        st.markdown("**Adicionar usuário**")
+        with st.form("add_usuario", clear_on_submit=True):
+            c1, c2 = st.columns([2, 3])
+            novo_nome = c1.text_input("Nome (apelido):", placeholder="João Vaqueiro")
+            novo_tel  = c2.text_input("Número (com DDD):", placeholder="77981258479")
+
+            st.markdown("**Permissões:**")
+            cols_perm = st.columns(len(PERMISSOES_OPCOES))
+            perms_sel = []
+            for i, (key, label) in enumerate(PERMISSOES_OPCOES.items()):
+                default = (key == "admin")
+                if cols_perm[i].checkbox(label, value=default, key=f"perm_{key}"):
+                    perms_sel.append(key)
+
+            if st.form_submit_button("Cadastrar", type="primary"):
+                if not novo_tel:
+                    st.warning("Digite o número.")
+                elif not perms_sel:
+                    st.warning("Selecione ao menos uma permissão.")
                 else:
-                    set_config('telefone_wpp', tel_clean)
-                    _registrar_telefone(tel_clean)
-                    st.success(f"Número +{tel_clean} cadastrado. Agora você pode usar o bot.")
-                    time.sleep(0.8)
-                    st.rerun()
-            else:
-                st.warning("Digite o número antes de salvar.")
+                    tel_clean = _normalizar_tel(novo_tel)
+                    if len(tel_clean) < 12 or len(tel_clean) > 14:
+                        st.error("Número inválido. Inclua DDD + número (ex: 77981258479).")
+                    else:
+                        if _registrar_telefone(tel_clean, fazenda_id, novo_nome, perms_sel):
+                            st.success(f"Usuário +{tel_clean} cadastrado com: {', '.join(PERMISSOES_OPCOES[p] for p in perms_sel)}")
+                            time.sleep(0.8)
+                            st.rerun()
+
+        # Editar permissões de usuário existente
+        if usuarios:
+            st.divider()
+            st.markdown("**Editar permissões**")
+            tel_opcoes = {f"{u['nome'] or u['tel']} (+{u['tel'][-8:]})": u['tel'] for u in usuarios}
+            sel = st.selectbox("Selecionar usuário:", list(tel_opcoes.keys()))
+            if sel:
+                u_sel = next(u for u in usuarios if u['tel'] == tel_opcoes[sel])
+                with st.form("edit_perm"):
+                    st.markdown(f"Permissões de **{sel}**:")
+                    cols_ep = st.columns(len(PERMISSOES_OPCOES))
+                    novas_perms = []
+                    for i, (key, label) in enumerate(PERMISSOES_OPCOES.items()):
+                        if cols_ep[i].checkbox(label, value=(key in u_sel['permissoes']), key=f"ep_{key}"):
+                            novas_perms.append(key)
+                    if st.form_submit_button("Salvar permissões", type="primary"):
+                        if not novas_perms:
+                            st.warning("Selecione ao menos uma permissão.")
+                        else:
+                            _registrar_telefone(u_sel['tel'], fazenda_id, u_sel['nome'], novas_perms)
+                            st.success("Permissões atualizadas!")
+                            time.sleep(0.5)
+                            st.rerun()
 
     # ── Seção 2: Como usar ────────────────────
     with st.container(border=True):

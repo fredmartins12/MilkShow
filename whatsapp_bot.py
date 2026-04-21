@@ -98,9 +98,45 @@ def _variantes_tel(tel: str):
     return list(dict.fromkeys(variantes))  # remove duplicatas mantendo ordem
 
 
+# Mapeamento: tipo de ação → permissão necessária
+# Usuários sem "admin" nas permissões são verificados contra este mapa
+_PERM_POR_TIPO = {
+    "PRODUCAO_LEITE":   "ordenha",
+    "PRODUCAO_MULTIPLA":"ordenha",
+    "VENDA_LEITE":      "ordenha",
+    "NOVO_ANIMAL":      "rebanho",
+    "COMPRA_ANIMAL":    "rebanho",
+    "VENDA_ANIMAL":     "rebanho",
+    "MORTE_ANIMAL":     "rebanho",
+    "REPRODUCAO":       "rebanho",
+    "GASTO_GERAL":      "financeiro",
+    "GASTO_SANITARIO":  "financeiro",
+    "COMPRA_PRODUTO":   "armazem",
+    "USO_PRODUTO":      "armazem",
+}
+
+# Tipos que são apenas consulta — qualquer usuário ativo pode fazer
+_TIPOS_CONSULTA = {"RESUMO", "RELATORIO", "CONSULTA", "AGENDA", "ESTOQUE_INFO"}
+
+# Labels amigáveis das permissões (usados no dashboard e nas mensagens)
+PERMISSOES_LABELS = {
+    "admin":      "Acesso Total",
+    "ordenha":    "Ordenha",
+    "rebanho":    "Rebanho",
+    "financeiro": "Financeiro",
+    "armazem":    "Armazém",
+}
+
+
 def _find_fazenda(tel_limpo: str) -> Optional[str]:
-    """Retorna fazenda_id pelo número, com cache de 30 min para evitar reads repetidos."""
-    key = f"tel:{tel_limpo}"
+    """Retorna fazenda_id pelo número, com cache de 30 min."""
+    info = _find_user_info(tel_limpo)
+    return info["fazenda_id"] if info else None
+
+
+def _find_user_info(tel_limpo: str) -> Optional[dict]:
+    """Retorna {fazenda_id, permissoes, nome} do número. Cache 30 min."""
+    key = f"usr:{tel_limpo}"
     cached = _cache_get(key)
     if cached is not None:
         return cached if cached != "__none__" else None
@@ -108,12 +144,38 @@ def _find_fazenda(tel_limpo: str) -> Optional[str]:
     for variante in _variantes_tel(tel_limpo):
         doc = db.collection('registros_tel').document(variante).get()
         if doc.exists and doc.to_dict().get('ativo', True):
-            fid = doc.to_dict().get('fazenda_id', 'default')
-            log.info(f"[{tel_limpo}] encontrado como variante '{variante}'")
-            _cache_set(key, fid, 1800)   # 30 min
-            return fid
-    _cache_set(key, "__none__", 300)     # número não cadastrado: cache 5 min
+            d = doc.to_dict()
+            info = {
+                "fazenda_id":  d.get('fazenda_id', 'default'),
+                "permissoes":  d.get('permissoes', ['admin']),  # sem campo = admin (retrocompat)
+                "nome":        d.get('nome', ''),
+            }
+            log.info(f"[{tel_limpo}] variante '{variante}' perms={info['permissoes']}")
+            _cache_set(key, info, 1800)
+            return info
+    _cache_set(key, "__none__", 300)
     return None
+
+
+def _tem_permissao(permissoes: list, tipo_acao: str) -> bool:
+    """Verifica se o usuário pode executar o tipo de ação."""
+    if "admin" in permissoes:
+        return True
+    if tipo_acao in _TIPOS_CONSULTA:
+        return True
+    perm_necessaria = _PERM_POR_TIPO.get(tipo_acao)
+    if perm_necessaria is None:
+        return True  # tipo desconhecido: não bloqueia
+    return perm_necessaria in permissoes
+
+
+def _msg_sem_permissao(tipo_acao: str) -> str:
+    perm = _PERM_POR_TIPO.get(tipo_acao, tipo_acao)
+    label = PERMISSOES_LABELS.get(perm, perm)
+    return (
+        f"Você não tem permissão para registrar *{label}*. "
+        f"Fale com o gestor da fazenda para liberar seu acesso."
+    )
 
 
 def _coll(fazenda_id: str, nome: str):
@@ -165,7 +227,7 @@ _FILA_JANELA = 4    # segundos de espera por mais mensagens
 import asyncio as _asyncio_fila
 
 
-async def _encaminhar_apos_janela(tel: str, fazenda_id: str, enviar_fn):
+async def _encaminhar_apos_janela(tel: str, fazenda_id: str, enviar_fn, permissoes=None):
     """Aguarda FILA_JANELA segundos e processa todas as mensagens acumuladas."""
     await _asyncio_fila.sleep(_FILA_JANELA)
     with _FILA_LOCK:
@@ -181,11 +243,11 @@ async def _encaminhar_apos_janela(tel: str, fazenda_id: str, enviar_fn):
         texto_final = " | ".join(partes)
         log.info(f"[{tel}] {len(msgs)} mensagens agrupadas: '{texto_final[:80]}'")
 
-    resposta = _processar(tel, texto_final, fazenda_id)
+    resposta = _processar(tel, texto_final, fazenda_id, permissoes)
     enviar_fn(tel, resposta)
 
 
-async def _enfileirar(tel: str, texto: str, fazenda_id: str, enviar_fn) -> bool:
+async def _enfileirar(tel: str, texto: str, fazenda_id: str, enviar_fn, permissoes=None) -> bool:
     """Adiciona mensagem na fila. Retorna True se deve aguardar (há fila ativa).
     Retorna False se pode processar imediatamente (primeira mensagem, sem fila).
     """
@@ -199,7 +261,7 @@ async def _enfileirar(tel: str, texto: str, fazenda_id: str, enviar_fn) -> bool:
 
     # Cancela o task anterior e cria novo com janela reiniciada
     # (o asyncio.create_task vai sobrescrever o timer)
-    _asyncio_fila.create_task(_encaminhar_apos_janela(tel, fazenda_id, enviar_fn))
+    _asyncio_fila.create_task(_encaminhar_apos_janela(tel, fazenda_id, enviar_fn, permissoes))
     return True
 
 
@@ -1056,7 +1118,9 @@ def _chamar_claude(historico: list, animais: str, estoque: str = "",
     return parsed
 
 
-def _processar(tel: str, texto: str, fazenda_id: str) -> str:
+def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list] = None) -> str:
+    if permissoes is None:
+        permissoes = ["admin"]
     conv = _get_conv(tel)
 
     # TTL: abandona conversas COLETANDO/CONFIRMANDO com mais de 2h
@@ -1118,6 +1182,11 @@ def _processar(tel: str, texto: str, fazenda_id: str) -> str:
     hist.append({"role": "assistant", "content": json.dumps(parsed, ensure_ascii=False)})
 
     if estado == "SALVAR":
+        # Verifica permissão antes de salvar
+        if tipo and not _tem_permissao(permissoes, tipo):
+            _clear_conv(tel)
+            return _msg_sem_permissao(tipo)
+
         try:
             itens = parsed.get("itens") or conv.get("itens")
             if tipo == "PRODUCAO_MULTIPLA" and itens:
@@ -2073,24 +2142,25 @@ async def webhook_evolution(request: Request):
     if not texto:
         return {"ok": True}
 
-    fazenda_id = _find_fazenda(tel_limpo)
-    if fazenda_id is None:
+    user_info = _find_user_info(tel_limpo)
+    if user_info is None:
         _enviar_whatsapp(tel_limpo,
             "Numero nao cadastrado no MilkShow.\n"
             "Acesse o app, va em Configuracoes > Bot IA e informe este numero.")
         return {"ok": True}
 
+    fazenda_id = user_info["fazenda_id"]
+    permissoes = user_info["permissoes"]
+
     # Anti-flood: se chegaram várias mensagens juntas (offline), agrupa antes de processar
     with _FILA_LOCK:
         tem_fila = tel_limpo in _FILA
     if tem_fila:
-        # Adiciona à fila existente e espera janela completar
         with _FILA_LOCK:
             _FILA[tel_limpo].append({"texto": texto, "ts": datetime.datetime.now()})
         log.info(f"[{tel_limpo}] mensagem adicionada à fila ({len(_FILA[tel_limpo])} total)")
         return {"ok": True}
 
-    # Primeira mensagem — inicia fila e aguarda FILA_JANELA segundos por mais mensagens
     _iniciar_fila(tel_limpo, texto)
     await _asyncio_fila.sleep(_FILA_JANELA)
 
@@ -2106,7 +2176,7 @@ async def webhook_evolution(request: Request):
         texto_final = " | ".join(m["texto"] for m in msgs)
         log.info(f"[{tel_limpo}] {len(msgs)} msgs agrupadas offline: '{texto_final[:80]}'")
 
-    resposta = _processar(tel_limpo, texto_final, fazenda_id)
+    resposta = _processar(tel_limpo, texto_final, fazenda_id, permissoes)
     _enviar_whatsapp(tel_limpo, resposta)
     return {"ok": True}
 
@@ -2127,14 +2197,16 @@ async def webhook(
     log.info(f"[{tel_limpo}] mensagem: '{texto[:80]}' | media: {NumMedia}")
 
     # ── Identifica a fazenda pelo número ─────
-    fazenda_id = _find_fazenda(tel_limpo)
-    if fazenda_id is None:
+    user_info = _find_user_info(tel_limpo)
+    if user_info is None:
         log.warning(f"[{tel_limpo}] numero nao cadastrado")
         return _twiml(
             "Numero nao cadastrado no MilkShow.\n"
             "Acesse o app, va em Configuracoes > Bot IA e informe este numero."
         )
 
+    fazenda_id = user_info["fazenda_id"]
+    permissoes = user_info["permissoes"]
     log.info(f"[{tel_limpo}] fazenda: {fazenda_id}")
 
     twilio_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
@@ -2189,7 +2261,7 @@ async def webhook(
         texto_final = " | ".join(m["texto"] for m in msgs)
         log.info(f"[{tel_limpo}] {len(msgs)} msgs agrupadas offline: '{texto_final[:80]}'")
 
-    resposta = _processar(tel_limpo, texto_final, fazenda_id)
+    resposta = _processar(tel_limpo, texto_final, fazenda_id, permissoes)
     return _twiml(resposta)
 
 
