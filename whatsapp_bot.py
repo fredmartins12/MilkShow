@@ -292,17 +292,34 @@ def _cache_del(prefix: str):
 
 
 def _rate_ok(tel: str, max_por_min: int = 10) -> bool:
-    """True se o número ainda não atingiu o limite de mensagens por minuto."""
+    """True se o número ainda não atingiu o limite de mensagens por minuto.
+    Usa Firebase para ser global entre os workers do uvicorn."""
     agora  = datetime.datetime.now()
     janela = agora - datetime.timedelta(minutes=1)
+
+    # Fallback em memória (rápido, para o mesmo worker)
     with _LOCK:
-        hist = [t for t in _RATE.get(tel, []) if t > janela]
-        if len(hist) >= max_por_min:
-            _RATE[tel] = hist
+        hist_local = [t for t in _RATE.get(tel, []) if t > janela]
+        if len(hist_local) >= max_por_min:
+            _RATE[tel] = hist_local
             return False
-        hist.append(agora)
-        _RATE[tel] = hist
-        return True
+        hist_local.append(agora)
+        _RATE[tel] = hist_local
+
+    # Verificação global via Firebase (evita que 2 workers burlem o limite juntos)
+    try:
+        doc_ref = _db().collection("rate_limit").document(tel)
+        doc = doc_ref.get()
+        timestamps = doc.to_dict().get("ts", []) if doc.exists else []
+        ts_validos = [t for t in timestamps if t > janela.isoformat()]
+        if len(ts_validos) >= max_por_min:
+            return False
+        ts_validos.append(agora.isoformat())
+        doc_ref.set({"ts": ts_validos[-max_por_min:]})
+    except Exception:
+        pass  # Se Firebase falhar, confia no rate limit local
+
+    return True
 
 
 # ── Leitores com cache ───────────────────────
@@ -1181,8 +1198,14 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
 
     hist.append({"role": "assistant", "content": json.dumps(parsed, ensure_ascii=False)})
 
+    # Verifica permissão assim que o tipo é identificado (1ª vez — conversa era idle)
+    # Evita que o usuário passe por toda a coleta só para ser bloqueado no final
+    if tipo and conv.get("estado") in ("idle", None) and not _tem_permissao(permissoes, tipo):
+        _clear_conv(tel)
+        return _msg_sem_permissao(tipo)
+
     if estado == "SALVAR":
-        # Verifica permissão antes de salvar
+        # Verifica de novo no SALVAR (segurança dupla — caso tipo mude durante coleta)
         if tipo and not _tem_permissao(permissoes, tipo):
             _clear_conv(tel)
             return _msg_sem_permissao(tipo)
@@ -1728,6 +1751,7 @@ def _enviar_twilio(para: str, mensagem: str) -> bool:
 
 def _enviar_whatsapp(para: str, mensagem: str) -> bool:
     """Envia mensagem em cascata: Evolution (grátis) → Z-API (flat) → Twilio (por mensagem)."""
+    log.info(f"[{para}] enviando: '{mensagem[:60].replace(chr(10),' ')}'")
     for fn in (_enviar_evolution, _enviar_zapi, _enviar_twilio):
         if fn(para, mensagem):
             return True
