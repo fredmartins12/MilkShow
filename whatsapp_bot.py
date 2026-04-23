@@ -2296,9 +2296,7 @@ async def webhook(
 async def _abrir_tunel():
     ngrok_token = os.environ.get("NGROK_AUTHTOKEN", "")
     if not ngrok_token:
-        log.info("NGROK_AUTHTOKEN nao definido — tunel nao aberto automaticamente.")
-        log.info("Defina NGROK_AUTHTOKEN=<seu_token> para tunel automatico.")
-        return
+        return  # produção usa nginx — ngrok não necessário
     try:
         import ngrok as ngrok_sdk
         listener = await ngrok_sdk.forward(8000, authtoken=ngrok_token)
