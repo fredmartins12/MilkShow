@@ -2086,6 +2086,7 @@ async def webhook_evolution(request: Request):
 
     # Ignora grupos (remoteJid termina com @g.us)
     remote = key.get("remoteJid", "")       # ex: "5577981258479@s.whatsapp.net"
+    log.info(f"[DEBUG webhook] remote={remote} key={key}")
     if remote.endswith("@g.us"):
         return {"ok": True}
 
