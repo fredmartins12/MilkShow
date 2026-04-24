@@ -223,6 +223,7 @@ _LOCK  = threading.Lock()
 _FILA:  dict = {}   # tel → [{"texto": ..., "ts": ...}]
 _FILA_LOCK = threading.Lock()
 _FILA_JANELA = 4    # segundos de espera por mais mensagens
+_JID_CACHE: dict = {}   # tel_limpo → remoteJid original (para LIDs do novo WhatsApp)
 
 import asyncio as _asyncio_fila
 
@@ -1676,17 +1677,25 @@ def _enviar_evolution(para: str, mensagem: str) -> bool:
         num = re.sub(r'\D', '', para)
         if not num.startswith('55'):
             num = '55' + num
+        # Candidatos: número limpo e JID original (para LIDs do novo WhatsApp)
+        jid_original = _JID_CACHE.get(para, "")
+        candidatos = [num]
+        if jid_original and jid_original not in candidatos:
+            candidatos.append(jid_original)
         # Delay de 1.2s para simular comportamento humano e evitar banimento
         _time.sleep(1.2)
-        r = _hx.post(
-            f"{url.rstrip('/')}/message/sendText/{instance}",
-            headers={"apikey": api_key, "Content-Type": "application/json"},
-            json={"number": num, "text": mensagem, "delay": 1200},
-            timeout=15,
-        )
-        ok = r.status_code in (200, 201)
-        log.info(f"Evolution → {para}: {'OK' if ok else f'FALHOU {r.status_code}'}")
-        return ok
+        for candidato in candidatos:
+            r = _hx.post(
+                f"{url.rstrip('/')}/message/sendText/{instance}",
+                headers={"apikey": api_key, "Content-Type": "application/json"},
+                json={"number": candidato, "text": mensagem, "delay": 1200},
+                timeout=15,
+            )
+            if r.status_code in (200, 201):
+                log.info(f"Evolution → {para}: OK (via {candidato})")
+                return True
+        log.info(f"Evolution → {para}: FALHOU {r.status_code}")
+        return False
     except Exception as e:
         log.warning(f"Evolution falhou: {e}")
         return False
@@ -2082,6 +2091,8 @@ async def webhook_evolution(request: Request):
 
     tel_raw   = remote.split("@")[0]        # extrai só o número
     tel_limpo = _normalizar_tel(tel_raw)
+    # Guarda o JID original para usar no envio (LIDs do novo WhatsApp)
+    _JID_CACHE[tel_limpo] = remote
 
     # Extrai texto (suporta conversation e extendedTextMessage)
     msg = data.get("message", {})
