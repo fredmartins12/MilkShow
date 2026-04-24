@@ -1673,15 +1673,16 @@ def _enviar_evolution(para: str, mensagem: str) -> bool:
     try:
         import httpx as _hx
         import time as _time
-        # Formata número: apenas dígitos com 55
-        num = re.sub(r'\D', '', para)
-        if not num.startswith('55'):
-            num = '55' + num
-        # Candidatos: número limpo e JID original (para LIDs do novo WhatsApp)
+        # Usa o JID original se disponível (LIDs do novo WhatsApp não têm prefixo 55)
         jid_original = _JID_CACHE.get(para, "")
-        candidatos = [num]
-        if jid_original and jid_original not in candidatos:
-            candidatos.append(jid_original)
+        if jid_original:
+            # JID original: pode ser "247480428060674@lid" ou "5511999@s.whatsapp.net"
+            candidatos = [jid_original]
+        else:
+            num = re.sub(r'\D', '', para)
+            if not num.startswith('55'):
+                num = '55' + num
+            candidatos = [num]
         # Delay de 1.2s para simular comportamento humano e evitar banimento
         _time.sleep(1.2)
         for candidato in candidatos:

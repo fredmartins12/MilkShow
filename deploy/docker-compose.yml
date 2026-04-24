@@ -34,7 +34,7 @@ services:
       retries: 3
 
   evolution:
-    image: atendai/evolution-api:v2.3.0
+    image: atendai/evolution-api:latest
     container_name: milkshow_evolution
     restart: always
     ports:
