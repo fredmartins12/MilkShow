@@ -79,10 +79,11 @@ services:
       WEBHOOK_EVENTS_CONNECTION_UPDATE: "false"
       # — Instância padrão —
       DEL_INSTANCE: "false"
-      # — WhatsApp versão (auto-detect) —
+      # — WhatsApp versão —
       WA_BUSINESS_TOKEN_WEBHOOK: "false"
       CONFIG_SESSION_PHONE_CLIENT: "MilkShow"
       CONFIG_SESSION_PHONE_NAME: "Chrome"
+      WA_VERSION: "2,3000,1035194821"
       # — Armazenamento —
       STORE_CLEANING_INTERVAL: "7200"
       STORE_MESSAGES: "true"
