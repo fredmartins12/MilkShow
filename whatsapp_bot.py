@@ -992,7 +992,8 @@ TIPOS DE REGISTRO:
    Se a pergunta for sobre algo que não está nos dados, use estado SEM_RESPOSTA.
 
 9. PRODUCAO_MULTIPLA — foto ou lista com produção de múltiplos animais OU múltiplos dias
-   ATENÇÃO: é APENAS litros produzidos. NUNCA peça valor de venda, preço/litro ou valor comercializado.
+   ATENÇÃO: é APENAS litros produzidos. NUNCA peça, calcule ou mostre valor de venda, preço/litro,
+   valor total ou valor comercializado. Esses campos não existem em PRODUCAO_MULTIPLA.
    Se os dados já foram extraídos da imagem, NÃO os peça de novo — use-os diretamente.
    "fazenda inteira", "rebanho todo", "produção geral" → animal = "Rebanho".
 
@@ -1078,9 +1079,9 @@ MENSAGENS AGRUPADAS (produtor ficou sem internet):
   → salva 3 registros separados: COMPRA_PRODUTO + GASTO_SANITARIO + PRODUCAO_LEITE
 - Ao confirmar, informe quantos registros foram salvos: "3 registros salvos com sucesso."
 - Se alguma parte for ambígua, salva o que deu e pergunta só o que ficou pendente.
-- PRODUCAO_MULTIPLA com muitos itens (>5): NO estado CONFIRMANDO, NÃO liste todos os itens no texto.
-  Use resumo compacto: "📋 Tabela de [Animal] — [N] dias, total [X] L. Confirma? (sim/não)"
-  Exemplo: "📋 Tabela de Fobinha — 29 dias, total 1.452 L. Confirma? (sim/não)"
+- PRODUCAO_MULTIPLA com muitos itens (>5): NO campo "texto" do CONFIRMANDO, NÃO liste todos os itens.
+  Use resumo compacto: "📋 Rebanho — 30 dias, total 1.452 L. Confirma? (sim/não)"
+  MAS o campo "itens" do JSON DEVE sempre conter o array completo — nunca omita os itens do JSON.
 
 RESPONDA SEMPRE EM JSON VÁLIDO sem markdown:
 {"texto":"mensagem ao produtor","estado":"COLETANDO|CONFIRMANDO|SALVAR|CANCELAR|CONSULTA|SEM_RESPOSTA","tipo":"COMPRA_PRODUTO|COMPRA_ANIMAL|GASTO_SANITARIO|GASTO_GERAL|VENDA_LEITE|VENDA_ANIMAL|PRODUCAO_LEITE|PRODUCAO_MULTIPLA|NOVO_ANIMAL|REPRODUCAO|DESCONHECIDO","dados":{"produto":null,"qtd":null,"unidade":null,"valor":null,"fornecedor":null,"tipo_sanitario":null,"modo":null,"animal":null,"qtd_usada":null,"descricao":null,"categoria":null,"litros":null,"turno":null,"data":null,"laticinio":null,"nome":null,"sexo":null,"status_animal":null,"nasc":null,"lote":null,"id_animal":null,"evento":null,"obs":null,"custo":null},"itens":null}
@@ -1398,6 +1399,16 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
 
         try:
             itens = parsed.get("itens") or conv.get("itens")
+            # Fallback: varre histórico da conversa procurando itens de turn anterior
+            if not itens and tipo == "PRODUCAO_MULTIPLA":
+                for msg in reversed(hist):
+                    try:
+                        h = json.loads(msg.get("content", "{}"))
+                        if h.get("itens"):
+                            itens = h["itens"]
+                            break
+                    except Exception:
+                        pass
             if tipo == "PRODUCAO_MULTIPLA" and itens:
                 dados["itens"] = itens
                 resposta = _salvar(tipo, dados, fazenda_id)
@@ -1436,6 +1447,8 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
         conv.update({"historico": hist, "estado": estado, "dados": dados, "tipo": tipo})
         if itens_parsed:
             conv["itens"] = itens_parsed
+        elif conv.get("itens"):
+            pass  # preserva itens anteriores — não sobrescreve com None
         _save_conv(tel, conv)
 
         # Botões interativos quando entra em confirmação
