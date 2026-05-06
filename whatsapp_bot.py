@@ -242,9 +242,12 @@ def _save_conv(tel: str, conv: dict):
     threading.Thread(target=_write, daemon=True).start()
 
 
-def _clear_conv(tel: str):
+def _clear_conv(tel: str, ultimo_salvo: dict = None):
+    """Limpa a conversa preservando o último registro salvo para contexto pós-salvar."""
     vazio = {"historico": [], "estado": "idle", "dados": {}, "tipo": None,
              "ts": datetime.datetime.now().isoformat()}
+    if ultimo_salvo:
+        vazio["ultimo_salvo"] = ultimo_salvo   # persiste para próxima mensagem
     with _CONV_LOCK:
         _CONV_MEM[tel] = vazio
 
@@ -864,6 +867,8 @@ DADOS DA FAZENDA (use para responder perguntas):
 MEMÓRIA DA FAZENDA (preferências e termos customizados):
 {memoria}
 
+{ultimo_salvo}
+
 LINGUAGEM DO PRODUTOR — aceite TODAS as variações abaixo:
 - Erros de ortografia: "raçao","vacin","antibiotico","ivermctina","ocitosina","penicilna"
 - Gírias/regionalismos: "remo"/"remédio"=medicamento, "bicho"/"animal"=animal, "garrote"=novilho macho,
@@ -1287,15 +1292,38 @@ def _salvar_memoria(fazenda_id: str, chave: str, valor):
 
 
 def _chamar_claude(historico: list, animais: str, estoque: str = "",
-                   dados_fazenda: str = "", memoria: str = "") -> dict:
+                   dados_fazenda: str = "", memoria: str = "",
+                   ultimo_salvo: dict = None) -> dict:
     """Chama IAs em cascata: Groq → Gemini → Claude Haiku.
     Usa modelo rápido (8B) para mensagens simples.
     """
+    # Monta bloco de último registro salvo para contexto pós-salvar
+    if ultimo_salvo:
+        tipo_us  = ultimo_salvo.get("tipo", "")
+        resp_us  = ultimo_salvo.get("resposta", "")
+        itens_us = ultimo_salvo.get("itens") or []
+        dados_us = ultimo_salvo.get("dados") or {}
+        if itens_us:
+            resumo_itens = ", ".join(
+                f"{it.get('produto') or it.get('animal') or 'item'}"
+                f" {it.get('qtd','')}{it.get('unidade','')} R${it.get('valor','?')}"
+                for it in itens_us[:10]
+            )
+            ctx_ultimo = f"ÚLTIMO REGISTRO SALVO: {tipo_us} — {resumo_itens}."
+        else:
+            animal = dados_us.get('animal','')
+            valor  = dados_us.get('valor','')
+            ctx_ultimo = f"ÚLTIMO REGISTRO SALVO: {tipo_us} — animal: {animal}, valor: R${valor}."
+        ctx_ultimo += " Se o produtor referenciar 'esses itens', 'isso', 'os mesmos' etc., está se referindo a este registro."
+    else:
+        ctx_ultimo = ""
+
     system = (SYSTEM
               .replace("{animais}", animais)
               .replace("{estoque}", estoque)
               .replace("{dados_fazenda}", dados_fazenda)
-              .replace("{memoria}", memoria or "nenhuma preferência salva"))
+              .replace("{memoria}", memoria or "nenhuma preferência salva")
+              .replace("{ultimo_salvo}", ctx_ultimo))
 
     eh_simples = _eh_mensagem_simples(historico)
 
@@ -1385,8 +1413,9 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
     secoes = _classificar_pergunta(texto)
     dados_fazenda = _ctx_dados_fazenda(fazenda_id, secoes) if secoes else ""
     memoria = _get_memoria_fazenda(fazenda_id)
+    ultimo_salvo = conv.get("ultimo_salvo")   # contexto do último registro salvo
 
-    parsed   = _chamar_claude(hist, animais, estoque, dados_fazenda, memoria)
+    parsed   = _chamar_claude(hist, animais, estoque, dados_fazenda, memoria, ultimo_salvo)
     estado   = parsed.get("estado", "COLETANDO")
     tipo     = parsed.get("tipo") or conv.get("tipo")
     novos    = {k: v for k, v in (parsed.get("dados") or {}).items() if v is not None}
@@ -1407,6 +1436,7 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
             _clear_conv(tel)
             return _msg_sem_permissao(tipo)
 
+        ultimo_salvo = None
         try:
             itens = parsed.get("itens") or conv.get("itens")
             # Fallback: varre histórico da conversa procurando itens de turn anterior
@@ -1422,6 +1452,7 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
             if tipo == "PRODUCAO_MULTIPLA" and itens:
                 dados["itens"] = itens
                 resposta = _salvar(tipo, dados, fazenda_id)
+                ultimo_salvo = {"tipo": tipo, "dados": dados, "itens": itens, "resposta": resposta}
             elif itens and isinstance(itens, list) and len(itens) > 1:
                 msgs = []
                 forn = dados.get("fornecedor") or ""
@@ -1431,12 +1462,14 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
                 resposta = f"*{len(itens)} itens salvos:*\n" + "\n".join(
                     m.replace("*Salvo!*\n", "- ") for m in msgs
                 )
+                ultimo_salvo = {"tipo": tipo, "dados": dados, "itens": itens, "resposta": resposta}
             else:
                 resposta = _salvar(tipo, dados, fazenda_id)
+                ultimo_salvo = {"tipo": tipo, "dados": dados, "itens": None, "resposta": resposta}
         except Exception as e:
             log.error(f"Erro ao salvar: {e}")
             resposta = f"Erro ao salvar: {str(e)[:120]}"
-        _clear_conv(tel)
+        _clear_conv(tel, ultimo_salvo=ultimo_salvo)
 
     elif estado == "CANCELAR":
         resposta = "Registro cancelado. Pode enviar outro se quiser."
@@ -1459,6 +1492,9 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
             conv["itens"] = itens_parsed
         elif conv.get("itens"):
             pass  # preserva itens anteriores — não sobrescreve com None
+        # Consome ultimo_salvo após 1 uso (evita poluir contexto indefinidamente)
+        if conv.get("ultimo_salvo") and estado in ("idle", None, "COLETANDO"):
+            conv.pop("ultimo_salvo", None)
         _save_conv(tel, conv)
 
         # Botões interativos quando entra em confirmação
