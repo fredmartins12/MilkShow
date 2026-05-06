@@ -43,7 +43,19 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("milkshow_bot")
 
+from starlette.middleware.cors import CORSMiddleware
+from mobile_api import mobile_router
+
 app = FastAPI(title="MilkShow WhatsApp Bot", version="1.0", docs_url=None, redoc_url=None)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(mobile_router)
 
 # Token interno para proteger endpoints administrativos
 # Defina BOT_ADMIN_TOKEN no .env — se não definido, endpoints admin ficam desabilitados
@@ -188,24 +200,60 @@ def _coll(fazenda_id: str, nome: str):
 
 # ─────────────────────────────────────────────
 # ESTADO DA CONVERSA (por número de telefone)
+# Cache em memória elimina roundtrips Firebase por mensagem.
 # ─────────────────────────────────────────────
+_CONV_MEM: dict = {}   # tel → conv dict
+_CONV_LOCK = threading.Lock()
+_CONV_TTL  = 7200      # 2h — igual ao TTL de abandono de conversa
+
 def _get_conv(tel: str) -> dict:
-    doc = _db().collection("conversas_bot").document(tel).get()
-    if doc.exists:
-        return doc.to_dict()
-    return {"historico": [], "estado": "idle", "dados": {}, "tipo": None}
+    """Lê do cache em memória; cai no Firebase só na primeira vez."""
+    with _CONV_LOCK:
+        entry = _CONV_MEM.get(tel)
+        if entry:
+            return dict(entry)          # cópia para não vazar referência
+
+    # Cache miss — lê Firebase uma única vez
+    try:
+        doc = _db().collection("conversas_bot").document(tel).get()
+        conv = doc.to_dict() if doc.exists else {}
+    except Exception:
+        conv = {}
+
+    if not conv:
+        conv = {"historico": [], "estado": "idle", "dados": {}, "tipo": None}
+
+    with _CONV_LOCK:
+        _CONV_MEM[tel] = conv
+    return dict(conv)
 
 
 def _save_conv(tel: str, conv: dict):
+    """Grava em memória imediatamente; persiste no Firebase em background."""
     conv["ts"] = datetime.datetime.now().isoformat()
-    _db().collection("conversas_bot").document(tel).set(conv)
+    with _CONV_LOCK:
+        _CONV_MEM[tel] = dict(conv)
+
+    def _write():
+        try:
+            _db().collection("conversas_bot").document(tel).set(conv)
+        except Exception as e:
+            log.warning(f"conv save error: {e}")
+    threading.Thread(target=_write, daemon=True).start()
 
 
 def _clear_conv(tel: str):
-    _db().collection("conversas_bot").document(tel).set(
-        {"historico": [], "estado": "idle", "dados": {}, "tipo": None,
-         "ts": datetime.datetime.now().isoformat()}
-    )
+    vazio = {"historico": [], "estado": "idle", "dados": {}, "tipo": None,
+             "ts": datetime.datetime.now().isoformat()}
+    with _CONV_LOCK:
+        _CONV_MEM[tel] = vazio
+
+    def _write():
+        try:
+            _db().collection("conversas_bot").document(tel).set(vazio)
+        except Exception as e:
+            log.warning(f"conv clear error: {e}")
+    threading.Thread(target=_write, daemon=True).start()
 
 
 # ─────────────────────────────────────────────
@@ -222,7 +270,7 @@ _LOCK  = threading.Lock()
 # processamos juntas após uma janela de 4s sem nova mensagem.
 _FILA:  dict = {}   # tel → [{"texto": ..., "ts": ...}]
 _FILA_LOCK = threading.Lock()
-_FILA_JANELA = 4    # segundos de espera por mais mensagens
+_FILA_JANELA = 0.5  # segundos de espera por mais mensagens (anti-flood offline)
 _JID_CACHE: dict = {}   # tel_limpo → remoteJid original (para LIDs do novo WhatsApp)
 
 import asyncio as _asyncio_fila
@@ -294,32 +342,16 @@ def _cache_del(prefix: str):
 
 def _rate_ok(tel: str, max_por_min: int = 10) -> bool:
     """True se o número ainda não atingiu o limite de mensagens por minuto.
-    Usa Firebase para ser global entre os workers do uvicorn."""
+    Usa apenas memória local — evita roundtrip Firebase por mensagem."""
     agora  = datetime.datetime.now()
     janela = agora - datetime.timedelta(minutes=1)
-
-    # Fallback em memória (rápido, para o mesmo worker)
     with _LOCK:
-        hist_local = [t for t in _RATE.get(tel, []) if t > janela]
-        if len(hist_local) >= max_por_min:
-            _RATE[tel] = hist_local
+        hist = [t for t in _RATE.get(tel, []) if t > janela]
+        if len(hist) >= max_por_min:
+            _RATE[tel] = hist
             return False
-        hist_local.append(agora)
-        _RATE[tel] = hist_local
-
-    # Verificação global via Firebase (evita que 2 workers burlem o limite juntos)
-    try:
-        doc_ref = _db().collection("rate_limit").document(tel)
-        doc = doc_ref.get()
-        timestamps = doc.to_dict().get("ts", []) if doc.exists else []
-        ts_validos = [t for t in timestamps if t > janela.isoformat()]
-        if len(ts_validos) >= max_por_min:
-            return False
-        ts_validos.append(agora.isoformat())
-        doc_ref.set({"ts": ts_validos[-max_por_min:]})
-    except Exception:
-        pass  # Se Firebase falhar, confia no rate limit local
-
+        hist.append(agora)
+        _RATE[tel] = hist
     return True
 
 
@@ -829,6 +861,9 @@ ESTOQUE ATUAL:
 DADOS DA FAZENDA (use para responder perguntas):
 {dados_fazenda}
 
+MEMÓRIA DA FAZENDA (preferências e termos customizados):
+{memoria}
+
 LINGUAGEM DO PRODUTOR — aceite TODAS as variações abaixo:
 - Erros de ortografia: "raçao","vacin","antibiotico","ivermctina","ocitosina","penicilna"
 - Gírias/regionalismos: "remo"/"remédio"=medicamento, "bicho"/"animal"=animal, "garrote"=novilho macho,
@@ -956,11 +991,22 @@ TIPOS DE REGISTRO:
    Para perguntas de rentabilidade: cite o custo/L, lucro/L e status (OK/ATENCAO/PREJUIZO) de cada animal.
    Se a pergunta for sobre algo que não está nos dados, use estado SEM_RESPOSTA.
 
-9. PRODUCAO_MULTIPLA — foto ou lista com produção de vários animais no mesmo dia
-   Use quando receber imagem ou texto listando cada vaca e seus litros.
-   Formato esperado: "Rainha 18L, Moreninha 12L, Pintada 9L" ou tabela/foto semelhante.
-   Use "itens": [{"animal":"Rainha","litros":18}, {"animal":"Moreninha","litros":12}, ...]
-   Obrigatório em cada item: animal, litros. Opcional: turno, data.
+9. PRODUCAO_MULTIPLA — foto ou lista com produção de múltiplos animais OU múltiplos dias
+   DOIS casos possíveis:
+
+   CASO A — múltiplos animais no mesmo dia (mais comum):
+   Formato: "Rainha 18L, Moreninha 12L, Pintada 9L"
+   Use "dados": {"data": "YYYY-MM-DD", "turno": 1},
+       "itens": [{"animal":"Rainha","litros":18}, {"animal":"Moreninha","litros":12}, ...]
+   Obrigatório em cada item: animal, litros. Opcional: turno.
+
+   CASO B — UM animal ao longo de vários dias (tabela mensal / quadro diário):
+   Foto mostra coluna de datas e coluna de litros para UMA vaca só.
+   Use "dados": {"animal": "NomeDaVaca"},
+       "itens": [{"data":"YYYY-MM-DD","litros":45}, {"data":"YYYY-MM-DD","litros":"//"},...]
+   Entradas com "//" ou "—" ou em branco significam "sem dado" → inclua-as com litros: "//" para que o sistema as ignore.
+   Datas em DD/MM/AAAA devem ser incluídas como estão — o sistema normaliza.
+   IMPORTANTE: sempre preencha o campo "data" de cada item com a data daquele dia, nunca repita a mesma data.
 
 REGRAS GERAIS:
 - TOLERE erros de digitação — interprete pela intenção, não pela grafia exata.
@@ -972,8 +1018,9 @@ REGRAS GERAIS:
 - Qualquer pergunta sobre dados da fazenda ("quanto produzi?","qual meu saldo?","quais vacas secas?","quando inseminei X?","quanto gastei com ração?") → estado CONSULTA, responda usando DADOS DA FAZENDA acima.
 - Se nao tiver os dados suficientes para responder → estado SEM_RESPOSTA, texto: "Desculpe, nao consigo responder a isso ainda. Vou anotar sua sugestao para a proxima versao."
 - NUNCA invente valores monetários. Se faltar, pergunte.
-- Se a mensagem veio de FOTO DE NOTA FISCAL, os dados já foram extraídos — use-os diretamente.
-- Se a mensagem veio de FOTO DE PRODUÇÃO, extraia lista de animais e litros → PRODUCAO_MULTIPLA.
+- Se a mensagem começa com "[Nota fiscal]" → dados já extraídos, use COMPRA_INSUMO/GASTO_SANITARIO diretamente.
+- Se começa com "[Foto tabela mensal de producao]" → PRODUCAO_MULTIPLA caso B: animal no topo, itens com data+litros de cada dia. Entradas "//" são dias sem ordenha — inclua com litros:"//". Confirme com o produtor antes de salvar.
+- Se começa com "[Foto producao do dia]" → PRODUCAO_MULTIPLA caso A: vários animais, mesma data. Confirme antes de salvar.
 - MÚLTIPLOS TIPOS em uma mensagem (sem " | "): ex "apliquei ivermectina e comprei ração" → identifique cada ação, registre as que tem dados completos e pergunte os faltantes. Exemplo de resposta: "Ivermectina aplicada (registrada). E a ração: quanto custou e qual quantidade?"
 
 VALIDAÇÕES OBRIGATÓRIAS — pergunte ao produtor antes de aceitar:
@@ -1016,6 +1063,9 @@ MENSAGENS AGRUPADAS (produtor ficou sem internet):
   → salva 3 registros separados: COMPRA_PRODUTO + GASTO_SANITARIO + PRODUCAO_LEITE
 - Ao confirmar, informe quantos registros foram salvos: "3 registros salvos com sucesso."
 - Se alguma parte for ambígua, salva o que deu e pergunta só o que ficou pendente.
+- PRODUCAO_MULTIPLA com muitos itens (>5): NO estado CONFIRMANDO, NÃO liste todos os itens no texto.
+  Use resumo compacto: "📋 Tabela de [Animal] — [N] dias, total [X] L. Confirma? (sim/não)"
+  Exemplo: "📋 Tabela de Fobinha — 29 dias, total 1.452 L. Confirma? (sim/não)"
 
 RESPONDA SEMPRE EM JSON VÁLIDO sem markdown:
 {"texto":"mensagem ao produtor","estado":"COLETANDO|CONFIRMANDO|SALVAR|CANCELAR|CONSULTA|SEM_RESPOSTA","tipo":"COMPRA_PRODUTO|COMPRA_ANIMAL|GASTO_SANITARIO|GASTO_GERAL|VENDA_LEITE|VENDA_ANIMAL|PRODUCAO_LEITE|PRODUCAO_MULTIPLA|NOVO_ANIMAL|REPRODUCAO|DESCONHECIDO","dados":{"produto":null,"qtd":null,"unidade":null,"valor":null,"fornecedor":null,"tipo_sanitario":null,"modo":null,"animal":null,"qtd_usada":null,"descricao":null,"categoria":null,"litros":null,"turno":null,"data":null,"laticinio":null,"nome":null,"sexo":null,"status_animal":null,"nasc":null,"lote":null,"id_animal":null,"evento":null,"obs":null,"custo":null},"itens":null}
@@ -1038,23 +1088,27 @@ def _extrair_json(raw: str) -> dict:
             return {}
 
 
-def _ia_groq(system: str, historico: list) -> str | None:
-    """Groq — LLaMA 3.3 70B. Grátis: 30 req/min, 14.400 req/dia."""
+def _ia_groq(system: str, historico: list, fast: bool = False) -> str | None:
+    """Groq — grátis: 30 req/min, 14.400 req/dia.
+    fast=True → llama-3.1-8b-instant (~0.3s) para registros simples.
+    fast=False → llama-3.3-70b-versatile (~1.5s) para consultas complexas.
+    """
     key = os.environ.get("GROQ_API_KEY", "")
     if not key:
         return None
+    model = "llama-3.1-8b-instant" if fast else "llama-3.3-70b-versatile"
     try:
         import httpx as _hx
         msgs = [{"role": "system", "content": system}] + historico[-8:]
         r = _hx.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {key}"},
-            json={"model": "llama-3.3-70b-versatile", "messages": msgs,
+            json={"model": model, "messages": msgs,
                   "max_tokens": 600, "temperature": 0.1},
-            timeout=20,
+            timeout=10,
         )
         txt = r.json()["choices"][0]["message"]["content"].strip()
-        log.info("IA: Groq OK")
+        log.info(f"IA: Groq OK ({model})")
         return txt
     except Exception as e:
         log.warning(f"Groq falhou: {e}")
@@ -1082,7 +1136,7 @@ def _ia_gemini(system: str, historico: list) -> str | None:
             f"https://generativelanguage.googleapis.com/v1beta/models/"
             f"gemini-2.0-flash:generateContent?key={key}",
             json=body,
-            timeout=20,
+            timeout=10,
         )
         txt = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         log.info("IA: Gemini OK")
@@ -1113,19 +1167,120 @@ def _ia_claude(system: str, historico: list) -> str | None:
         return None
 
 
+def _eh_mensagem_simples(historico: list) -> bool:
+    """Detecta se a última mensagem é simples o suficiente para o modelo rápido.
+    Usa llama-3.1-8b-instant (0.3s) em vez do 70B (1.5s).
+    """
+    if len(historico) > 2:          # conversa em andamento → usa modelo forte
+        return False
+    ultima = (historico[-1].get("content") or "").lower().strip()
+    simples = [
+        r'^\d+[.,]?\d*\s*(litros?|l)\b',           # "450 litros"
+        r'^(sim|nao|não|ok|s|n|isso|correto|bora|pode|cancela?r?|esquece)$',
+        r'^(ajuda|help|oi|olá|ola|estoque|resumo|reset|cancelar)$',
+        r'^(sim|não),?\s*(confirma|cancela)',
+    ]
+    return any(re.match(p, ultima) for p in simples)
+
+
+def _fast_path(texto: str, fazenda_id: str) -> dict | None:
+    """Resolve registros óbvios sem chamar IA — retorno em <1ms.
+    Cobre o caso mais comum: 'X litros [turno]' → PRODUCAO_LEITE direto.
+    """
+    hoje  = datetime.date.today().isoformat()
+    lower = texto.lower().strip()
+
+    # "450 litros" / "450l" / "450 litros tarde"
+    m = re.match(
+        r'^(\d+[.,]?\d*)\s*(?:litros?|l)\b'
+        r'(?:\s+(?:de\s+)?(?:hoje|ontem))?\s*'
+        r'(?:[,-]?\s*(manha|manhã|tarde|noite))?'
+        r'(?:\s+(?:de\s+)?(?:hoje|ontem))?\s*$',
+        lower
+    )
+    if m:
+        litros = float(m.group(1).replace(',', '.'))
+        turno_str = m.group(2) or "manhã"
+        turno = {"manha": 1, "manhã": 1, "tarde": 2, "noite": 3}.get(turno_str, 1)
+        if 0 < litros < 20000:
+            turno_nome = {1: "Manhã", 2: "Tarde", 3: "Noite"}[turno]
+            return {
+                "texto": f"✅ *{litros:.0f} L* registrados — {turno_nome}.",
+                "estado": "SALVAR", "tipo": "PRODUCAO_LEITE",
+                "dados": {"litros": litros, "turno": turno, "data": hoje},
+                "itens": None,
+            }
+    return None
+
+
+def _get_memoria_fazenda(fazenda_id: str) -> str:
+    """Carrega preferências aprendidas da fazenda — preço do leite, termos customizados."""
+    key = f"mem:{fazenda_id}"
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+    try:
+        db  = _db()
+        ref = db.collection("fazendas").document(fazenda_id) if fazenda_id != "default" \
+              else db.collection("config").document("memoria_bot")
+        doc = ref.collection("memoria_bot").document("preferencias").get() \
+              if fazenda_id != "default" \
+              else db.collection("config").document("memoria_bot").get()
+        if doc.exists:
+            d = doc.to_dict()
+            linhas = []
+            if d.get("preco_leite"):
+                linhas.append(f"Preço do leite desta fazenda: R${d['preco_leite']}/L")
+            if d.get("termos"):
+                for orig, trad in d["termos"].items():
+                    linhas.append(f'"{orig}" nesta fazenda = "{trad}"')
+            if d.get("notas"):
+                linhas.append(d["notas"])
+            mem = "\n".join(linhas)
+            _cache_set(key, mem, 3600)
+            return mem
+    except Exception:
+        pass
+    _cache_set(key, "", 3600)
+    return ""
+
+
+def _salvar_memoria(fazenda_id: str, chave: str, valor):
+    """Persiste preferência aprendida para uso futuro."""
+    try:
+        db  = _db()
+        if fazenda_id == "default":
+            ref = db.collection("config").document("memoria_bot")
+        else:
+            ref = db.collection("fazendas").document(fazenda_id)\
+                    .collection("memoria_bot").document("preferencias")
+        ref.set({chave: valor}, merge=True)
+        _cache_del(f"mem:{fazenda_id}")
+    except Exception as e:
+        log.warning(f"salvar_memoria: {e}")
+
+
 def _chamar_claude(historico: list, animais: str, estoque: str = "",
-                   dados_fazenda: str = "") -> dict:
-    """Chama IAs em cascata: Groq → Gemini → Claude Haiku."""
+                   dados_fazenda: str = "", memoria: str = "") -> dict:
+    """Chama IAs em cascata: Groq → Gemini → Claude Haiku.
+    Usa modelo rápido (8B) para mensagens simples.
+    """
     system = (SYSTEM
               .replace("{animais}", animais)
               .replace("{estoque}", estoque)
-              .replace("{dados_fazenda}", dados_fazenda))
+              .replace("{dados_fazenda}", dados_fazenda)
+              .replace("{memoria}", memoria or "nenhuma preferência salva"))
+
+    eh_simples = _eh_mensagem_simples(historico)
 
     raw = None
-    for tentativa in (_ia_groq, _ia_gemini, _ia_claude):
-        raw = tentativa(system, historico)
-        if raw:
-            break
+    # Groq com modelo selecionado por complexidade
+    raw = _ia_groq(system, historico, fast=eh_simples)
+    # Fallback cascata
+    if not raw:
+        raw = _ia_gemini(system, historico)
+    if not raw:
+        raw = _ia_claude(system, historico)
 
     if not raw:
         return {"texto": "Erro ao processar. Tente novamente.", "estado": "ERRO", "tipo": None, "dados": {}}
@@ -1186,11 +1341,26 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
     hist = conv.get("historico", [])
     hist.append({"role": "user", "content": texto})
 
+    # Fast path — resolve registros simples sem IA
+    if conv.get("estado") in ("idle", None):
+        fp = _fast_path(texto, fazenda_id)
+        if fp:
+            log.info(f"[{tel}] fast_path: {fp['tipo']}")
+            if fp["estado"] == "SALVAR" and fp.get("tipo") and fp.get("dados"):
+                if _tem_permissao(permissoes, fp["tipo"]):
+                    resposta_fp = _salvar(fp["tipo"], fp["dados"], fazenda_id)
+                    _clear_conv(tel)
+                    return resposta_fp
+                else:
+                    _clear_conv(tel)
+                    return _msg_sem_permissao(fp["tipo"])
+
     # Contexto seletivo: carrega apenas as seções necessárias para a pergunta
     secoes = _classificar_pergunta(texto)
     dados_fazenda = _ctx_dados_fazenda(fazenda_id, secoes) if secoes else ""
+    memoria = _get_memoria_fazenda(fazenda_id)
 
-    parsed   = _chamar_claude(hist, animais, estoque, dados_fazenda)
+    parsed   = _chamar_claude(hist, animais, estoque, dados_fazenda, memoria)
     estado   = parsed.get("estado", "COLETANDO")
     tipo     = parsed.get("tipo") or conv.get("tipo")
     novos    = {k: v for k, v in (parsed.get("dados") or {}).items() if v is not None}
@@ -1252,6 +1422,11 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
         if itens_parsed:
             conv["itens"] = itens_parsed
         _save_conv(tel, conv)
+
+        # Botões interativos quando entra em confirmação
+        if estado == "CONFIRMANDO":
+            _enviar_botoes(tel, resposta, [("sim", "✅ Confirmar"), ("nao", "❌ Cancelar")])
+            return "__botoes_enviados__"
 
     return resposta
 
@@ -1515,31 +1690,79 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str) -> str:
 
     # ── PRODUCAO_MULTIPLA ─────────────────────
     elif tipo == "PRODUCAO_MULTIPLA":
+        # itens pode vir dentro de dados["itens"] (quando montado pelo _processar)
         itens_prod = dados.get("itens") or []
-        # itens pode vir no nível raiz também
-        if not itens_prod and isinstance(dados, dict):
-            itens_prod = []
-        data   = dados.get("data") or hoje
-        _turno_raw2 = dados.get("turno") or 1
+        if not itens_prod:
+            return "Nenhum item de produção encontrado."
+
+        data_padrao = dados.get("data") or hoje   # fallback quando item não tem data
         _turno_map2 = {"manha": 1, "manhã": 1, "tarde": 2, "noite": 3}
+        turno_padrao_raw = dados.get("turno") or 1
         try:
-            turno = int(_turno_raw2)
+            turno_padrao = int(turno_padrao_raw)
         except (ValueError, TypeError):
-            turno = _turno_map2.get(str(_turno_raw2).lower().strip(), 1)
-        salvos = []
+            turno_padrao = _turno_map2.get(str(turno_padrao_raw).lower().strip(), 1)
+
+        salvos = 0
+        total  = 0.0
+        animais_vistos: set = set()
+
         for item in itens_prod:
-            nome_raw = item.get("animal") or item.get("nome") or "?"
-            nome_ani, id_ani = _resolver_animal(fazenda_id, nome_raw)
-            litros   = float(item.get("litros") or 0)
+            # Litros: ignora entradas com "//" ou valor zero/inválido
+            litros_raw = item.get("litros")
+            if litros_raw is None or str(litros_raw).strip() in ("//", "—", "-", "", "null"):
+                continue
+            try:
+                litros = float(str(litros_raw).replace(",", "."))
+            except (ValueError, TypeError):
+                continue
             if litros <= 0:
                 continue
+
+            # Data: cada item pode ter sua própria data (tabela dia-a-dia)
+            data_item = item.get("data") or data_padrao
+            try:
+                # Normaliza para YYYY-MM-DD
+                if "/" in str(data_item):
+                    partes = str(data_item).split("/")
+                    if len(partes) == 3:
+                        d, m, a = partes
+                        data_item = f"{a}-{m.zfill(2)}-{d.zfill(2)}"
+            except Exception:
+                data_item = data_padrao
+
+            # Turno por item ou padrão
+            turno_item_raw = item.get("turno") or turno_padrao
+            try:
+                turno_item = int(turno_item_raw)
+            except (ValueError, TypeError):
+                turno_item = _turno_map2.get(str(turno_item_raw).lower().strip(), turno_padrao)
+
+            # Animal: um único animal pode estar no dado geral (tabela de 1 animal por mês)
+            nome_raw = item.get("animal") or dados.get("animal") or "Rebanho"
+            nome_ani, id_ani = _resolver_animal(fazenda_id, nome_raw)
+            animais_vistos.add(nome_ani)
+
             _coll(fazenda_id, "producao").add({
-                "data": str(data), "leite": litros, "turno": turno,
-                "id_animal": id_ani, "nome_animal": nome_ani, "racao": 0,
+                "data":        str(data_item),
+                "leite":       litros,
+                "turno":       turno_item,
+                "id_animal":   id_ani,
+                "nome_animal": nome_ani,
+                "racao":       0,
             })
-            salvos.append(f"{nome_ani}: {litros:.0f}L")
-        total = sum(float(i.get("litros", 0)) for i in itens_prod)
-        return f"*Producao salva ({len(salvos)} animais, {total:.0f}L total):*\n" + "\n".join(salvos)
+            salvos += 1
+            total  += litros
+
+        if salvos == 0:
+            return "Nenhum registro válido encontrado na tabela."
+
+        animais_txt = ", ".join(sorted(animais_vistos))
+        return (
+            f"✅ *{salvos} registros salvos!*\n"
+            f"Animal(is): {animais_txt}\n"
+            f"Total: *{total:.0f} L*"
+        )
 
     return "Registro salvo!"
 
@@ -1618,7 +1841,7 @@ async def _ler_imagem(media_url: str, twilio_sid: str, twilio_token: str,
         client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
         resp = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=400,
+            max_tokens=800,
             messages=[{
                 "role": "user",
                 "content": [
@@ -1629,28 +1852,40 @@ async def _ler_imagem(media_url: str, twilio_sid: str, twilio_token: str,
                     {
                         "type": "text",
                         "text": (
-                            "Analise esta imagem de uma fazenda leiteira. Pode ser:\n"
+                            "Analise esta imagem de uma fazenda leiteira. Identifique qual dos tipos abaixo:\n\n"
                             "A) NOTA FISCAL / RECIBO / CUPOM: tem produtos, quantidades, valores, nome da loja.\n"
-                            "B) LISTA/QUADRO DE PRODUÇÃO DE LEITE: lista nomes de vacas com litros produzidos "
+                            "B) TABELA MENSAL DE UMA VACA: coluna de dias/datas e coluna de litros para UM único animal "
+                            "(ex: quadro no celeiro com datas e produção diária de Fobinha).\n"
+                            "C) LISTA DE VACAS DO DIA: lista com vários animais e seus litros de HOJE "
                             "(ex: Rainha 18L, Moreninha 12L).\n"
-                            "C) OUTRO (descreva brevemente).\n\n"
+                            "D) OUTRO (descreva brevemente).\n\n"
                             "Se for A: responda exatamente assim:\n"
-                            "[NOTA FISCAL]\nFornecedor: ...\nItens:\n- Produto: X, Qtd: N, Unidade: U, Valor: R$V\n"
+                            "[NOTA FISCAL]\nFornecedor: ...\nItens:\n- Produto: X, Qtd: N, Unidade: U, Valor: R$V\n\n"
                             "Se for B: responda exatamente assim:\n"
-                            "[PRODUCAO DE LEITE]\nData: hoje\nAnimais:\n- Animal: NomeVaca, Litros: N\n"
-                            "Se for C: descreva o que vê e pergunte como registrar.\n"
-                            "Extraia todos os dados visíveis. Responda apenas com os dados, sem explicação extra."
+                            "[TABELA MENSAL]\nAnimal: NomeDaVaca\nMes: MM/AAAA\nRegistros:\n"
+                            "- Data: DD/MM/AAAA, Litros: N\n"
+                            "(use '//' para dias sem dado — ex: Litros: //)\n\n"
+                            "Se for C: responda exatamente assim:\n"
+                            "[PRODUCAO DO DIA]\nData: DD/MM/AAAA (se visível, senão 'hoje')\nAnimais:\n"
+                            "- Animal: NomeVaca, Litros: N\n\n"
+                            "Se for D: descreva o que vê em 1 linha.\n\n"
+                            "Extraia TODOS os dados visíveis. Inclua todas as linhas da tabela. "
+                            "Responda apenas com os dados extraídos, sem explicação extra."
                         ),
                     },
                 ],
             }],
         )
         texto = resp.content[0].text.strip()
-        log.info(f"Vision extraiu: {texto[:120]}")
-        # Detecta tipo para prefixar adequadamente
-        if "[PRODUCAO DE LEITE]" in texto:
-            return f"[Foto producao] {texto}"
-        return f"[Nota fiscal] {texto}"
+        log.info(f"Vision extraiu: {texto[:200]}")
+        # Detecta tipo para prefixar adequadamente ao passar para o bot
+        if "[TABELA MENSAL]" in texto:
+            return f"[Foto tabela mensal de producao] {texto}"
+        if "[PRODUCAO DO DIA]" in texto:
+            return f"[Foto producao do dia] {texto}"
+        if "[NOTA FISCAL]" in texto:
+            return f"[Nota fiscal] {texto}"
+        return f"[Foto] {texto}"
     except Exception as e:
         log.error(f"Vision error: {e}")
         return ""
@@ -1672,24 +1907,20 @@ def _enviar_evolution(para: str, mensagem: str) -> bool:
         return False
     try:
         import httpx as _hx
-        import time as _time
         # Usa o JID original se disponível (LIDs do novo WhatsApp não têm prefixo 55)
         jid_original = _JID_CACHE.get(para, "")
         if jid_original:
-            # JID original: pode ser "247480428060674@lid" ou "5511999@s.whatsapp.net"
             candidatos = [jid_original]
         else:
             num = re.sub(r'\D', '', para)
             if not num.startswith('55'):
                 num = '55' + num
             candidatos = [num]
-        # Delay de 1.2s para simular comportamento humano e evitar banimento
-        _time.sleep(1.2)
         for candidato in candidatos:
             r = _hx.post(
                 f"{url.rstrip('/')}/message/sendText/{instance}",
                 headers={"apikey": api_key, "Content-Type": "application/json"},
-                json={"number": candidato, "text": mensagem, "delay": 1200},
+                json={"number": candidato, "text": mensagem, "delay": 300},
                 timeout=15,
             )
             if r.status_code in (200, 201):
@@ -1767,6 +1998,57 @@ def _enviar_whatsapp(para: str, mensagem: str) -> bool:
             return True
     log.error(f"Todos os provedores WhatsApp falharam para {para}")
     return False
+
+
+def _enviar_typing(para: str, duracao_ms: int = 4000):
+    """Mostra indicador 'digitando...' — feedback imediato ao produtor."""
+    url  = os.environ.get("EVOLUTION_URL", "").rstrip("/")
+    key  = os.environ.get("EVOLUTION_KEY", "")
+    inst = os.environ.get("EVOLUTION_INSTANCE", "milkshow")
+    if not url or not key:
+        return
+    jid = _JID_CACHE.get(para, para)
+    try:
+        import httpx as _hx
+        _hx.post(
+            f"{url}/chat/sendPresence/{inst}",
+            headers={"apikey": key, "Content-Type": "application/json"},
+            json={"number": jid, "options": {"presence": "composing", "delay": duracao_ms}},
+            timeout=4,
+        )
+    except Exception:
+        pass
+
+
+def _enviar_botoes(para: str, texto: str, opcoes: list[tuple[str, str]]):
+    """Envia mensagem com botões interativos via Evolution API.
+    opcoes = [("id", "texto"), ...]  — máx 3 botões.
+    Cai em texto simples se Evolution não suportar.
+    """
+    url  = os.environ.get("EVOLUTION_URL", "").rstrip("/")
+    key  = os.environ.get("EVOLUTION_KEY", "")
+    inst = os.environ.get("EVOLUTION_INSTANCE", "milkshow")
+    jid  = _JID_CACHE.get(para, para)
+    if not url or not key:
+        _enviar_whatsapp(para, texto)
+        return
+    try:
+        import httpx as _hx
+        botoes = [{"buttonId": bid, "buttonText": {"displayText": btxt}, "type": 0}
+                  for bid, btxt in opcoes[:3]]
+        r = _hx.post(
+            f"{url}/message/sendButtons/{inst}",
+            headers={"apikey": key, "Content-Type": "application/json"},
+            json={"number": jid, "title": "MilkShow", "description": texto,
+                  "footer": "", "buttons": botoes, "delay": 300},
+            timeout=10,
+        )
+        if r.status_code not in (200, 201):
+            raise ValueError(f"status {r.status_code}")
+        log.info(f"Botões → {para}: OK")
+    except Exception as e:
+        log.warning(f"Botões falhou ({e}), enviando texto simples")
+        _enviar_whatsapp(para, texto)
 
 
 def _todos_telefones() -> list:
@@ -1929,6 +2211,199 @@ def _gerar_alertas_proativos(fazenda_id: str) -> list:
 
 
 # ─────────────────────────────────────────────
+# ONBOARDING VIA WHATSAPP
+# ─────────────────────────────────────────────
+_ONBOARDING: dict = {}   # tel → {"step": str, "nome_fazenda": str}
+
+def _processar_onboarding(tel: str, texto: str):
+    """Fluxo de cadastro: número desconhecido → cria fazenda pelo WhatsApp."""
+    state = _ONBOARDING.get(tel, {})
+    step  = state.get("step", "inicio")
+    texto = texto.strip()
+
+    if step == "inicio" or not state:
+        _ONBOARDING[tel] = {"step": "aguarda_nome"}
+        _enviar_whatsapp(tel,
+            "👋 Olá! Bem-vindo ao *MilkShow*!\n\n"
+            "Seu número não está cadastrado ainda.\n"
+            "Quer criar sua fazenda agora? Qual é o *nome da fazenda*?"
+        )
+        return
+
+    if step == "aguarda_nome":
+        if len(texto) < 2:
+            _enviar_whatsapp(tel, "Por favor, informe o nome da fazenda:")
+            return
+        _ONBOARDING[tel] = {"step": "aguarda_email", "nome_fazenda": texto}
+        _enviar_whatsapp(tel,
+            f"Ótimo! *{texto}* 🐄\n\n"
+            "Agora informe seu *e-mail* para acessar o painel web:"
+        )
+        return
+
+    if step == "aguarda_email":
+        email = texto.lower()
+        if "@" not in email or "." not in email:
+            _enviar_whatsapp(tel, "E-mail inválido. Tente novamente:")
+            return
+        nome_fazenda = state.get("nome_fazenda", "Minha Fazenda")
+        try:
+            _criar_fazenda_whatsapp(tel, email, nome_fazenda)
+            del _ONBOARDING[tel]
+            _enviar_whatsapp(tel,
+                f"✅ *Fazenda criada com sucesso!*\n\n"
+                f"🏡 {nome_fazenda}\n"
+                f"📧 {email}\n\n"
+                f"Você já pode usar o bot! Exemplos:\n"
+                f"• \"450 litros\" — produção do dia\n"
+                f"• \"comprei ração 300 reais\" — financeiro\n"
+                f"• \"ajuda\" — ver todos os comandos\n\n"
+                f"Acesse o painel em: http://178.104.252.193"
+            )
+        except Exception as e:
+            log.error(f"Onboarding erro: {e}")
+            _enviar_whatsapp(tel, f"Erro ao criar fazenda: {str(e)[:80]}\nTente novamente ou acesse o app.")
+        return
+
+    # Step desconhecido — reinicia
+    _ONBOARDING.pop(tel, None)
+    _enviar_whatsapp(tel, "Vamos recomeçar. Qual é o *nome da fazenda*?")
+    _ONBOARDING[tel] = {"step": "aguarda_nome"}
+
+
+def _criar_fazenda_whatsapp(tel: str, email: str, nome_fazenda: str):
+    """Cria documentos Firestore para nova fazenda cadastrada pelo WhatsApp."""
+    import uuid
+    fazenda_id = str(uuid.uuid4())[:12].replace("-", "")
+    db = _db()
+    db.collection("fazendas").document(fazenda_id).set({
+        "nome":        nome_fazenda,
+        "owner_email": email,
+        "owner_tel":   tel,
+        "created_at":  datetime.datetime.now().isoformat(),
+        "plano":       "trial",
+    })
+    db.collection("users").document(fazenda_id).set({
+        "email":      email,
+        "fazenda_id": fazenda_id,
+        "nome":       nome_fazenda,
+        "created_at": datetime.datetime.now().isoformat(),
+    })
+    db.collection("registros_tel").document(tel).set({
+        "fazenda_id": fazenda_id,
+        "nome":       "Proprietário",
+        "permissoes": ["admin"],
+        "ativo":      True,
+        "email":      email,
+        "created_at": datetime.datetime.now().isoformat(),
+    })
+    # Invalida cache para que próxima mensagem já reconheça o número
+    _cache_del(f"usr:{tel}")
+
+
+# ─────────────────────────────────────────────
+# RELATÓRIO MATINAL (briefing diário às 6h)
+# ─────────────────────────────────────────────
+def _relatorio_manha(fazenda_id: str) -> str:
+    """Resumo da manhã: produção de ontem, agenda de hoje, saldo do mês."""
+    hoje      = datetime.date.today()
+    ontem     = hoje - datetime.timedelta(days=1)
+    ini_mes   = hoje.replace(day=1).isoformat()
+
+    linhas = [f"🌅 *Bom dia! Resumo de {hoje.strftime('%d/%m/%Y')}*\n"]
+
+    try:
+        prod_ontem = _cached_producao(fazenda_id, ontem.isoformat(), ontem.isoformat())
+        total_ontem = sum(p.get("leite", 0) for p in prod_ontem)
+        if total_ontem > 0:
+            linhas.append(f"🥛 Produção de ontem: *{total_ontem:.0f} L*")
+        else:
+            linhas.append("🥛 Nenhuma produção registrada ontem.")
+    except Exception:
+        pass
+
+    try:
+        fin_mes = _cached_financeiro(fazenda_id, ini_mes)
+        rec  = sum(f.get("valor", 0) for f in fin_mes if "Venda" in f.get("cat", ""))
+        desp = sum(f.get("valor", 0) for f in fin_mes if "Venda" not in f.get("cat", ""))
+        saldo = rec - desp
+        emoji = "📈" if saldo >= 0 else "📉"
+        linhas.append(f"{emoji} Saldo do mês: *R$ {saldo:,.0f}*")
+    except Exception:
+        pass
+
+    try:
+        animais = _cached_animais(fazenda_id)
+        tarefas = []
+        DIAS_SECAR = 60; DIAS_DIAGN = 30; DIAS_PVE = 45; GESTACAO = 283
+
+        def _pd(s):
+            try: return datetime.datetime.strptime(str(s)[:10], "%Y-%m-%d").date() if s else None
+            except: return None
+
+        for a in animais:
+            nome, status = a.get("nome","?"), a.get("status","")
+            d_insem = _pd(a.get("dt_insem"))
+            d_parto = _pd(a.get("dt_parto"))
+            if status == "Lactação":
+                if d_insem and not a.get("prenhez"):
+                    if (hoje - d_insem).days == DIAS_DIAGN:
+                        tarefas.append(f"🔬 Diagnóstico prenhez: *{nome}*")
+                if not d_insem and d_parto and (hoje - d_parto).days > DIAS_PVE:
+                    tarefas.append(f"💉 Inseminar (atrasada): *{nome}*")
+                if a.get("prenhez") and d_insem:
+                    prev  = d_insem + datetime.timedelta(days=GESTACAO)
+                    secar = prev - datetime.timedelta(days=DIAS_SECAR)
+                    if secar == hoje:
+                        tarefas.append(f"🛑 Secar hoje: *{nome}*")
+                    if 1 <= (prev - hoje).days <= 7:
+                        tarefas.append(f"🐄 Parto em {(prev-hoje).days}d: *{nome}*")
+
+        if tarefas:
+            linhas.append("\n📋 *Agenda de hoje:*")
+            linhas.extend(tarefas[:5])
+        else:
+            linhas.append("📋 Nenhuma tarefa urgente hoje.")
+    except Exception:
+        pass
+
+    linhas.append("\nBom trabalho! 💪")
+    return "\n".join(linhas)
+
+
+# ─────────────────────────────────────────────
+# BACKUP SEMANAL (Firestore → JSON local)
+# ─────────────────────────────────────────────
+def _backup_fazenda(fazenda_id: str) -> bool:
+    """Exporta dados principais da fazenda para JSON local."""
+    try:
+        import json as _json
+        backup_dir = os.path.join(os.path.dirname(__file__), "backups")
+        os.makedirs(backup_dir, exist_ok=True)
+        data     = {}
+        colecoes = ["animais", "producao", "financeiro", "estoque", "sanitario", "config"]
+        for col in colecoes:
+            docs = [d.to_dict() for d in _coll(fazenda_id, col).stream()]
+            data[col] = docs
+        ts   = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+        path = os.path.join(backup_dir, f"backup_{fazenda_id[:8]}_{ts}.json")
+        with open(path, "w", encoding="utf-8") as f:
+            _json.dump(data, f, ensure_ascii=False, default=str, indent=2)
+        # Remove backups com mais de 4 semanas
+        for arq in os.listdir(backup_dir):
+            full = os.path.join(backup_dir, arq)
+            if os.path.isfile(full):
+                age = (datetime.datetime.now() - datetime.datetime.fromtimestamp(os.path.getmtime(full))).days
+                if age > 28:
+                    os.remove(full)
+        log.info(f"Backup {fazenda_id[:8]}: {path}")
+        return True
+    except Exception as e:
+        log.error(f"Backup erro {fazenda_id}: {e}")
+        return False
+
+
+# ─────────────────────────────────────────────
 # TWIML HELPER
 # ─────────────────────────────────────────────
 def _twiml(msg: str) -> Response:
@@ -1947,33 +2422,64 @@ def _twiml(msg: str) -> Response:
 import asyncio as _asyncio
 
 async def _loop_agendador():
-    """Roda em background: alertas às 7h todos os dias, relatório às 7h toda segunda."""
+    """Roda em background:
+    - 6h todo dia: relatório matinal + alertas críticos
+    - 7h toda segunda: relatório semanal
+    - Domingo às 2h: backup de todas as fazendas
+    """
     while True:
         try:
             agora = datetime.datetime.now()
-            # Próximo disparo às 7h
-            prox = agora.replace(hour=7, minute=0, second=0, microsecond=0)
-            if agora >= prox:
-                prox += datetime.timedelta(days=1)
+
+            # Calcula próximo disparo (6h ou 2h domingo, o que vier primeiro)
+            prox_6h = agora.replace(hour=6, minute=0, second=0, microsecond=0)
+            if agora >= prox_6h:
+                prox_6h += datetime.timedelta(days=1)
+
+            prox_backup = agora.replace(hour=2, minute=0, second=0, microsecond=0)
+            while prox_backup.weekday() != 6:  # domingo
+                prox_backup += datetime.timedelta(days=1)
+            if agora >= prox_backup:
+                prox_backup += datetime.timedelta(days=7)
+
+            prox   = min(prox_6h, prox_backup)
             espera = (prox - agora).total_seconds()
             await _asyncio.sleep(espera)
 
-            hoje   = datetime.date.today()
-            segunda = hoje.weekday() == 0  # segunda-feira
+            agora    = datetime.datetime.now()
+            hoje     = datetime.date.today()
+            segunda  = hoje.weekday() == 0
+            domingo  = hoje.weekday() == 6
+            eh_6h    = agora.hour == 6
             registros = _todos_telefones()
+
+            # ── Backup semanal (domingo às 2h) ────
+            if domingo and agora.hour == 2:
+                fazendas_vistas = set()
+                for reg in registros:
+                    fid = reg["fazenda_id"]
+                    if fid not in fazendas_vistas:
+                        fazendas_vistas.add(fid)
+                        await _asyncio.to_thread(_backup_fazenda, fid)
+                continue  # só backup neste ciclo
 
             for reg in registros:
                 tel        = reg["tel"]
                 fazenda_id = reg["fazenda_id"]
                 try:
-                    # Alertas proativos diários
+                    # Relatório matinal diário às 6h
+                    if eh_6h:
+                        manha = await _asyncio.to_thread(_relatorio_manha, fazenda_id)
+                        _enviar_whatsapp(tel, manha)
+
+                    # Alertas proativos críticos
                     alertas = _gerar_alertas_proativos(fazenda_id)
                     if alertas:
-                        msg = "*Alertas MilkShow — hoje:*\n" + "\n".join(f"• {a}" for a in alertas)
+                        msg = "*⚠️ Alertas MilkShow:*\n" + "\n".join(f"• {a}" for a in alertas)
                         _enviar_whatsapp(tel, msg)
 
                     # Relatório semanal toda segunda-feira
-                    if segunda:
+                    if segunda and eh_6h:
                         rel = _gerar_relatorio_semanal(fazenda_id)
                         _enviar_whatsapp(tel, rel)
 
@@ -2087,7 +2593,6 @@ async def webhook_evolution(request: Request):
 
     # Ignora grupos (remoteJid termina com @g.us)
     remote = key.get("remoteJid", "")       # ex: "5577981258479@s.whatsapp.net"
-    log.info(f"[DEBUG webhook] remote={remote} data_keys={list(data.keys())} participant={data.get('participant')} sender={data.get('sender')} pushName={data.get('pushName')}")
     if remote.endswith("@g.us"):
         return {"ok": True}
 
@@ -2158,19 +2663,42 @@ async def webhook_evolution(request: Request):
                 b64_str = _b64.standard_b64encode(img_bytes).decode()
                 client  = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
                 resp = client.messages.create(
-                    model="claude-haiku-4-5-20251001", max_tokens=400,
+                    model="claude-haiku-4-5-20251001", max_tokens=600,
                     messages=[{"role": "user", "content": [
                         {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64_str}},
                         {"type": "text", "text": (
-                            "Analise esta imagem de uma fazenda leiteira.\n"
-                            "Se NOTA FISCAL: [NOTA FISCAL]\\nFornecedor: ...\\nItens:\\n- Produto: X, Qtd: N, Unidade: U, Valor: R$V\n"
-                            "Se PRODUCAO DE LEITE: [PRODUCAO DE LEITE]\\nAnimais:\\n- Animal: Nome, Litros: N\n"
-                            "Se outro: descreva brevemente."
+                            "Analise esta imagem de uma fazenda leiteira. Identifique qual dos tipos:\n\n"
+                            "A) NOTA FISCAL / RECIBO / CUPOM: tem produtos, quantidades, valores, nome da loja.\n"
+                            "B) TABELA MENSAL DE UMA VACA: coluna de dias/datas e coluna de litros para UM único animal "
+                            "(ex: quadro no celeiro com datas e produção diária). Pode ser manuscrita em papel ou lousa.\n"
+                            "C) LISTA DE VACAS DO DIA: lista com vários animais e seus litros de hoje "
+                            "(ex: Rainha 18L, Moreninha 12L). Pode ser manuscrita.\n"
+                            "D) OUTRO\n\n"
+                            "Se A: responda exatamente:\n"
+                            "[NOTA FISCAL]\nFornecedor: ...\nItens:\n- Produto: X, Qtd: N, Unidade: U, Valor: R$V\n\n"
+                            "Se B: responda exatamente (leia com cuidado a escrita manual):\n"
+                            "[TABELA MENSAL]\nAnimal: NomeDaVaca\nMes: MM/AAAA\nRegistros:\n"
+                            "- Data: DD/MM/AAAA, Litros: N\n"
+                            "(use '//' para dias sem dado — ex: Litros: //)\n\n"
+                            "Se C: responda exatamente:\n"
+                            "[PRODUCAO DO DIA]\nData: DD/MM/AAAA (se visível, senão 'hoje')\nAnimais:\n"
+                            "- Animal: NomeVaca, Litros: N\n\n"
+                            "Se D: descreva brevemente.\n"
+                            "Extraia TODOS os dados visíveis. Inclua todas as linhas. "
+                            "Ignore rasuras. Responda somente os dados."
                         )},
                     ]}],
                 )
                 texto_img = resp.content[0].text.strip()
-                texto = f"[Foto producao] {texto_img}" if "[PRODUCAO DE LEITE]" in texto_img else f"[Nota fiscal] {texto_img}"
+                log.info(f"[Evolution] Vision extraiu: {texto_img[:200]}")
+                if "[TABELA MENSAL]" in texto_img:
+                    texto = f"[Foto tabela mensal de producao] {texto_img}"
+                elif "[PRODUCAO DO DIA]" in texto_img:
+                    texto = f"[Foto producao do dia] {texto_img}"
+                elif "[NOTA FISCAL]" in texto_img:
+                    texto = f"[Nota fiscal] {texto_img}"
+                else:
+                    texto = f"[Foto] {texto_img}"
         except Exception as e:
             log.error(f"Evolution imagem error: {e}")
 
@@ -2181,9 +2709,10 @@ async def webhook_evolution(request: Request):
 
     user_info = _find_user_info(tel_limpo)
     if user_info is None:
-        _enviar_whatsapp(tel_limpo,
-            "Numero nao cadastrado no MilkShow.\n"
-            "Acesse o app, va em Configuracoes > Bot IA e informe este numero.")
+        # Inicia/continua onboarding em vez de rejeitar
+        _asyncio_fila.create_task(
+            _asyncio_fila.to_thread(_processar_onboarding, tel_limpo, texto)
+        )
         return {"ok": True}
 
     fazenda_id = user_info["fazenda_id"]
@@ -2199,23 +2728,28 @@ async def webhook_evolution(request: Request):
         return {"ok": True}
 
     _iniciar_fila(tel_limpo, texto)
-    await _asyncio_fila.sleep(_FILA_JANELA)
 
-    with _FILA_LOCK:
-        msgs = _FILA.pop(tel_limpo, [])
+    async def _processar_e_enviar():
+        await _asyncio_fila.sleep(_FILA_JANELA)
+        with _FILA_LOCK:
+            msgs = _FILA.pop(tel_limpo, [])
+        if not msgs:
+            return
+        if len(msgs) == 1:
+            texto_final = msgs[0]["texto"]
+        else:
+            texto_final = " | ".join(m["texto"] for m in msgs)
+            log.info(f"[{tel_limpo}] {len(msgs)} msgs agrupadas offline: '{texto_final[:80]}'")
+        import asyncio as _aio
+        # Mostra "digitando..." imediatamente enquanto processa
+        _aio.create_task(_aio.to_thread(_enviar_typing, tel_limpo, 6000))
+        # Roda em thread para não bloquear o event loop (Firestore + httpx síncronos)
+        resposta = await _aio.to_thread(_processar, tel_limpo, texto_final, fazenda_id, permissoes)
+        if resposta != "__botoes_enviados__":
+            await _aio.to_thread(_enviar_whatsapp, tel_limpo, resposta)
 
-    if not msgs:
-        return {"ok": True}
-
-    if len(msgs) == 1:
-        texto_final = msgs[0]["texto"]
-    else:
-        texto_final = " | ".join(m["texto"] for m in msgs)
-        log.info(f"[{tel_limpo}] {len(msgs)} msgs agrupadas offline: '{texto_final[:80]}'")
-
-    resposta = _processar(tel_limpo, texto_final, fazenda_id, permissoes)
-    _enviar_whatsapp(tel_limpo, resposta)
-    return {"ok": True}
+    _asyncio_fila.create_task(_processar_e_enviar())
+    return {"ok": True}  # retorna imediatamente — processa em background
 
 
 @app.post("/webhook/whatsapp")

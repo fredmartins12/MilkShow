@@ -16,6 +16,12 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from datetime import timedelta
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 # ─────────────────────────────────────────────
 # CONSTANTS
 # ─────────────────────────────────────────────
@@ -85,8 +91,16 @@ def get_db():
 # CRUD
 # ─────────────────────────────────────────────
 def _fazenda_id() -> str:
-    """Returns current farm ID (supports multi-farm)."""
+    """Returns current farm ID from session (set after login)."""
     return st.session_state.get('fazenda_id', 'default')
+
+
+def logout():
+    """Limpa sessão e volta para login."""
+    for k in ['auth_token', 'usuario_email', 'usuario_uid', 'fazenda_id',
+              'nome_fazenda_cache', 'db', '_data_ts']:
+        st.session_state.pop(k, None)
+    st.rerun()
 
 
 def _coll(db, nome: str):
@@ -594,63 +608,287 @@ def calcular_score_rebanho() -> dict:
 
 
 # ─────────────────────────────────────────────
-# FIREBASE AUTH (REST)
+# FIREBASE AUTH (REST) — SaaS multi-fazenda
 # ─────────────────────────────────────────────
+def _firebase_auth_request(endpoint: str, payload: dict) -> tuple[dict, str]:
+    """Faz chamada à Firebase Auth REST API. Retorna (data, erro)."""
+    import urllib.request, urllib.error
+    api_key = _secret('FIREBASE_API_KEY', '')
+    url = f'https://identitytoolkit.googleapis.com/v1/accounts:{endpoint}?key={api_key}'
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode(),
+        headers={'Content-Type': 'application/json'}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read()), ''
+    except urllib.error.HTTPError as e:
+        try:
+            msg = json.loads(e.read()).get('error', {}).get('message', str(e))
+        except Exception:
+            msg = str(e)
+        return {}, _traduzir_erro_firebase(msg)
+    except Exception as e:
+        return {}, str(e)
+
+
+def _traduzir_erro_firebase(msg: str) -> str:
+    trad = {
+        'EMAIL_NOT_FOUND':       'E-mail não encontrado.',
+        'INVALID_PASSWORD':      'Senha incorreta.',
+        'INVALID_LOGIN_CREDENTIALS': 'E-mail ou senha incorretos.',
+        'USER_DISABLED':         'Conta desativada.',
+        'EMAIL_EXISTS':          'Este e-mail já está cadastrado.',
+        'WEAK_PASSWORD':         'Senha muito fraca (mínimo 6 caracteres).',
+        'INVALID_EMAIL':         'E-mail inválido.',
+        'TOO_MANY_ATTEMPTS_TRY_LATER': 'Muitas tentativas. Tente novamente mais tarde.',
+    }
+    for k, v in trad.items():
+        if k in msg:
+            return v
+    return msg
+
+
 def firebase_login(email: str, senha: str) -> tuple[bool, str]:
-    """Authenticates via Firebase Auth REST API. Returns (ok, error_msg)."""
-    import urllib.request
+    """Login via Firebase Auth. Carrega fazenda_id na sessão."""
     api_key = _secret('FIREBASE_API_KEY', '')
     if not api_key:
-        # try reading from firebase_key.json project_id isn't the api key; skip auth
-        return True, ''   # no key configured → bypass (dev mode)
+        st.session_state['fazenda_id'] = 'default'
+        return True, ''
 
-    url = f'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={api_key}'
-    payload = json.dumps({'email': email, 'password': senha, 'returnSecureToken': True}).encode()
-    req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+    data, err = _firebase_auth_request(
+        'signInWithPassword',
+        {'email': email, 'password': senha, 'returnSecureToken': True}
+    )
+    if err:
+        return False, err
+
+    uid = data.get('localId', '')
+    st.session_state['auth_token']    = data.get('idToken', '')
+    st.session_state['usuario_email'] = email
+    st.session_state['usuario_uid']   = uid
+
+    # Carrega fazenda_id do perfil do usuário
+    _carregar_fazenda_do_uid(uid)
+    return True, ''
+
+
+def firebase_signup(email: str, senha: str, nome_fazenda: str) -> tuple[bool, str]:
+    """Cadastra novo usuário e cria a fazenda no Firestore."""
+    api_key = _secret('FIREBASE_API_KEY', '')
+    if not api_key:
+        return False, 'FIREBASE_API_KEY não configurada.'
+
+    data, err = _firebase_auth_request(
+        'signUp',
+        {'email': email, 'password': senha, 'returnSecureToken': True}
+    )
+    if err:
+        return False, err
+
+    uid   = data.get('localId', '')
+    token = data.get('idToken', '')
+
+    # Cria documentos no Firestore
+    db = firestore.client()
+    fazenda_ref = db.collection('fazendas').document(uid)
+    fazenda_ref.set({
+        'nome':       nome_fazenda,
+        'owner_uid':  uid,
+        'owner_email': email,
+        'created_at': datetime.datetime.now().isoformat(),
+        'plano':      'trial',
+    })
+    db.collection('users').document(uid).set({
+        'email':      email,
+        'fazenda_id': uid,
+        'nome':       nome_fazenda,
+        'created_at': datetime.datetime.now().isoformat(),
+    })
+
+    st.session_state['auth_token']    = token
+    st.session_state['usuario_email'] = email
+    st.session_state['usuario_uid']   = uid
+    st.session_state['fazenda_id']    = uid
+    st.session_state['nome_fazenda_cache'] = nome_fazenda
+    return True, ''
+
+
+def _carregar_fazenda_do_uid(uid: str):
+    """Busca fazenda_id no Firestore users/{uid} e coloca na sessão."""
     try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            data = json.loads(resp.read())
-            st.session_state['usuario_email'] = data.get('email', email)
-            st.session_state['auth_token']    = data.get('idToken', '')
-            return True, ''
-    except Exception as e:
-        msg = str(e)
-        try:
-            import urllib.error
-            if isinstance(e, urllib.error.HTTPError):
-                body = json.loads(e.read())
-                msg = body.get('error', {}).get('message', msg)
-        except Exception:
-            pass
-        return False, msg
+        db   = firestore.client()
+        doc  = db.collection('users').document(uid).get()
+        if doc.exists:
+            d = doc.to_dict()
+            st.session_state['fazenda_id']         = d.get('fazenda_id', uid)
+            st.session_state['nome_fazenda_cache'] = d.get('nome', '')
+        else:
+            # Usuário Firebase sem perfil ainda (migração) → usa uid como fazenda_id
+            st.session_state['fazenda_id'] = uid
+    except Exception:
+        st.session_state['fazenda_id'] = uid
+
+
+def _google_signin_html() -> str:
+    """Retorna HTML com botão de login Google via Firebase JS SDK."""
+    firebase_config = json.dumps({
+        'apiKey':     _secret('FIREBASE_API_KEY', ''),
+        'authDomain': 'gestaodeleite-52cf2.firebaseapp.com',
+        'projectId':  'gestaodeleite-52cf2',
+    })
+    return f"""
+    <script type="module">
+      import {{ initializeApp, getApps }} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+      import {{ getAuth, signInWithPopup, GoogleAuthProvider }}
+        from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+
+      const cfg = {firebase_config};
+      const app = getApps().length ? getApps()[0] : initializeApp(cfg);
+      const auth = getAuth(app);
+
+      document.getElementById('gbtn').addEventListener('click', async () => {{
+        const btn = document.getElementById('gbtn');
+        btn.disabled = true;
+        btn.textContent = 'Aguarde...';
+        try {{
+          const result = await signInWithPopup(auth, new GoogleAuthProvider());
+          const token  = await result.user.getIdToken();
+          window.top.location.href =
+            window.top.location.href.split('?')[0] + '?g_token=' + encodeURIComponent(token);
+        }} catch (e) {{
+          document.getElementById('gerr').textContent = e.message;
+          btn.disabled = false;
+          btn.innerHTML = '<img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width=18 style="margin-right:8px">Entrar com Google';
+        }}
+      }});
+    </script>
+    <style>
+      body {{ margin:0; background:transparent; }}
+      #gbtn {{
+        width:100%; padding:12px 16px; border-radius:10px;
+        background:#1e293b; border:1px solid #334155;
+        color:#e2e8f0; font-size:0.95rem; font-weight:600;
+        cursor:pointer; display:flex; align-items:center; justify-content:center;
+        gap:8px; font-family:inherit;
+      }}
+      #gbtn:hover {{ background:#334155; }}
+      #gerr {{ color:#f87171; font-size:0.8rem; margin-top:6px; text-align:center; }}
+    </style>
+    <button id="gbtn">
+      <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width=18>
+      Entrar com Google
+    </button>
+    <div id="gerr"></div>
+    """
 
 
 def requer_autenticacao() -> bool:
     """
-    If FIREBASE_API_KEY is configured, gate the app behind a login form.
-    Returns True if user is authenticated (or no key configured).
+    Gating SaaS: exibe login/cadastro e carrega fazenda_id na sessão.
+    Retorna True se autenticado.
     """
     api_key = _secret('FIREBASE_API_KEY', '')
     if not api_key:
-        return True   # auth not configured → open access
+        if 'fazenda_id' not in st.session_state:
+            st.session_state['fazenda_id'] = 'default'
+        return True
 
     if st.session_state.get('auth_token'):
         return True
 
-    st.markdown(
-        '<div style="max-width:380px;margin:80px auto 0;">', unsafe_allow_html=True
-    )
-    st.markdown("## MilkShow")
-    with st.form('login_form'):
-        email = st.text_input('E-mail')
-        senha = st.text_input('Senha', type='password')
-        if st.form_submit_button('Entrar', type='primary', use_container_width=True):
-            ok, err = firebase_login(email, senha)
-            if ok:
-                st.rerun()
+    # ── Google OAuth token retornado pelo popup ──
+    g_token = st.query_params.get('g_token', '')
+    if g_token:
+        try:
+            from firebase_admin import auth as fb_auth
+            decoded   = fb_auth.verify_id_token(g_token)
+            uid       = decoded['uid']
+            email     = decoded.get('email', '')
+            name      = decoded.get('name', '')
+            db_fs     = firestore.client()
+            user_snap = db_fs.collection('users').document(uid).get()
+            if user_snap.exists:
+                _carregar_fazenda_do_uid(uid)
             else:
-                st.error(f'{err}')
-    st.markdown('</div>', unsafe_allow_html=True)
+                nome_faz = name or (email.split('@')[0] if email else uid)
+                db_fs.collection('fazendas').document(uid).set({
+                    'nome': nome_faz, 'owner_uid': uid, 'owner_email': email,
+                    'created_at': datetime.datetime.now().isoformat(), 'plano': 'trial',
+                })
+                db_fs.collection('users').document(uid).set({
+                    'email': email, 'fazenda_id': uid, 'nome': nome_faz,
+                    'created_at': datetime.datetime.now().isoformat(),
+                })
+                st.session_state['fazenda_id']         = uid
+                st.session_state['nome_fazenda_cache'] = nome_faz
+            st.session_state['auth_token']    = g_token
+            st.session_state['usuario_email'] = email
+            st.session_state['usuario_uid']   = uid
+            del st.query_params['g_token']
+            st.rerun()
+        except Exception as exc:
+            if 'g_token' in st.query_params:
+                del st.query_params['g_token']
+            st.error(f'Falha no login com Google: {exc}')
+
+    # ── Layout centralizado ──
+    _, col, _ = st.columns([1, 1.2, 1])
+    with col:
+        st.markdown(
+            '<div style="text-align:center;padding:40px 0 24px">'
+            '<span style="font-size:3rem">🐄</span>'
+            '<h1 style="margin:8px 0 4px;font-size:1.8rem">MilkShow</h1>'
+            '<p style="color:#94a3b8;margin:0">Gestão leiteira inteligente</p>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        aba = st.radio('', ['Entrar', 'Criar conta'], horizontal=True,
+                       label_visibility='collapsed')
+        st.markdown('')
+
+        if aba == 'Entrar':
+            with st.form('form_login'):
+                email = st.text_input('E-mail')
+                senha = st.text_input('Senha', type='password')
+                if st.form_submit_button('Entrar', type='primary', use_container_width=True):
+                    ok, err = firebase_login(email, senha)
+                    if ok:
+                        st.rerun()
+                    else:
+                        st.error(err)
+        else:
+            with st.form('form_cadastro'):
+                nome_fazenda = st.text_input('Nome da fazenda')
+                email        = st.text_input('E-mail')
+                senha        = st.text_input('Senha (mín. 6 caracteres)', type='password')
+                senha2       = st.text_input('Confirmar senha', type='password')
+                if st.form_submit_button('Criar conta', type='primary', use_container_width=True):
+                    if not nome_fazenda:
+                        st.error('Informe o nome da fazenda.')
+                    elif senha != senha2:
+                        st.error('Senhas não coincidem.')
+                    elif len(senha) < 6:
+                        st.error('Senha muito curta (mínimo 6 caracteres).')
+                    else:
+                        ok, err = firebase_signup(email, senha, nome_fazenda)
+                        if ok:
+                            st.rerun()
+                        else:
+                            st.error(err)
+
+        # ── Google Sign-in ──
+        st.markdown(
+            '<div style="display:flex;align-items:center;gap:10px;margin:16px 0 4px">'
+            '<div style="flex:1;height:1px;background:#1e293b"></div>'
+            '<span style="color:#475569;font-size:0.8em">ou</span>'
+            '<div style="flex:1;height:1px;background:#1e293b"></div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        components.html(_google_signin_html(), height=64)
+
     return False
 
 
@@ -933,11 +1171,17 @@ def gerar_relatorio_pdf_completo() -> bytes:
 # ALERTS (EMAIL / WHATSAPP)
 # ─────────────────────────────────────────────
 def _secret(key: str, default: str = '') -> str:
-    """Reads from st.secrets first; falls back to Firestore config."""
+    """Reads from st.secrets → os.environ → Firestore config."""
     try:
-        return st.secrets[key]
-    except (KeyError, FileNotFoundError):
-        return get_config(key, default)
+        val = st.secrets[key]
+        if val:
+            return val
+    except (KeyError, FileNotFoundError, Exception):
+        pass
+    env_val = os.environ.get(key, '')
+    if env_val:
+        return env_val
+    return get_config(key, default)
 
 
 def enviar_email_alertas(alertas):

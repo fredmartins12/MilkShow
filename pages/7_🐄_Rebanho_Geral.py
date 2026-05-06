@@ -9,7 +9,7 @@ import time
 from utils import (
     init_firebase, carregar_dados, apply_theme, page_banner,
     adicionar_item, atualizar_item, deletar_item, salvar_lote, fmt_date,
-    exportar_excel, sidebar_mini_resumo,
+    exportar_excel, sidebar_mini_resumo, requer_autenticacao,
 )
 import io as _io
 
@@ -17,6 +17,8 @@ st.set_page_config(page_title="MilkShow | Rebanho", layout="wide", page_icon="ðŸ
 apply_theme()
 init_firebase()
 carregar_dados()
+if not requer_autenticacao():
+    st.stop()
 
 st.sidebar.markdown(
     '<div class="sidebar-title">MilkShow</div>'

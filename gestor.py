@@ -15,7 +15,7 @@ from utils import (
     adicionar_item, atualizar_item,
     calcular_score_rebanho, sidebar_mini_resumo, injetar_atalhos_teclado,
     auto_refresh_contador, gerar_relatorio_pdf_completo, requer_autenticacao,
-    score_gauge_html,
+    score_gauge_html, logout,
 )
 
 # ── Page config ──────────────────────────────
@@ -40,14 +40,19 @@ if not requer_autenticacao():
     st.stop()
 
 # ── Sidebar branding ─────────────────────────
+nome_fazenda = st.session_state.get('nome_fazenda_cache', '') or get_config('nome_fazenda', 'Fazenda')
+email_usuario = st.session_state.get('usuario_email', '')
 st.sidebar.markdown(
-    '<div class="sidebar-title">MilkShow</div>'
-    '<div class="sidebar-sub">Gestão Leiteira</div>',
+    f'<div class="sidebar-title">MilkShow</div>'
+    f'<div class="sidebar-sub">{nome_fazenda}</div>'
+    f'<div style="font-size:0.72rem;color:#64748b;margin-top:2px">{email_usuario}</div>',
     unsafe_allow_html=True,
 )
 if st.sidebar.button("Atualizar Dados", use_container_width=True, help="Atalho: tecla R"):
     carregar_dados(force=True)
     st.rerun()
+if st.sidebar.button("Sair", use_container_width=True):
+    logout()
 
 auto_refresh_contador()
 injetar_atalhos_teclado()

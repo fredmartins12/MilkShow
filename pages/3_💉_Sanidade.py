@@ -9,12 +9,15 @@ from utils import (
     init_firebase, carregar_dados, apply_theme, page_banner,
     TIPOS_SANITARIOS, exportar_excel,
     registrar_procedimento_sanitario, sidebar_mini_resumo,
+    requer_autenticacao,
 )
 
 st.set_page_config(page_title="MilkShow | Sanidade", layout="wide", page_icon="💉")
 apply_theme()
 init_firebase()
 carregar_dados()
+if not requer_autenticacao():
+    st.stop()
 
 st.sidebar.markdown(
     '<div class="sidebar-title">MilkShow</div>'

@@ -14,13 +14,15 @@ from utils import (
     CATEGORIAS_RECEITA, CATEGORIAS_DESPESA, CATEGORIAS_FINANCEIRAS,
     CATEGORIAS_COM_ESTOQUE,
     registrar_compra_produto, registrar_compra_animal,
-    exportar_excel, sidebar_mini_resumo,
+    exportar_excel, sidebar_mini_resumo, requer_autenticacao,
 )
 
 st.set_page_config(page_title="MilkShow | Financeiro", layout="wide", page_icon="💰")
 apply_theme()
 init_firebase()
 carregar_dados()
+if not requer_autenticacao():
+    st.stop()
 
 st.sidebar.markdown(
     '<div class="sidebar-title">MilkShow</div>'

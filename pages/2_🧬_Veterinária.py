@@ -9,7 +9,7 @@ from utils import (
     init_firebase, carregar_dados, apply_theme, page_banner,
     processar_alertas, atualizar_item, adicionar_item,
     enviar_email_alertas, enviar_whatsapp_alertas,
-    GESTACAO, DIAS_SECAGEM,
+    GESTACAO, DIAS_SECAGEM, requer_autenticacao,
 )
 from datetime import timedelta
 
@@ -17,6 +17,8 @@ st.set_page_config(page_title="MilkShow | Veterinária", layout="wide", page_ico
 apply_theme()
 init_firebase()
 carregar_dados()
+if not requer_autenticacao():
+    st.stop()
 
 st.sidebar.markdown(
     '<div class="sidebar-title">MilkShow</div>'

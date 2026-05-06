@@ -11,13 +11,15 @@ from utils import (
     exportar_excel, sidebar_mini_resumo,
     registrar_compra_produto, registrar_procedimento_sanitario,
     atualizar_item,
-    TIPOS_SANITARIOS,
+    TIPOS_SANITARIOS, requer_autenticacao,
 )
 
 st.set_page_config(page_title="MilkShow | Armazém", layout="wide", page_icon="📦")
 apply_theme()
 init_firebase()
 carregar_dados()
+if not requer_autenticacao():
+    st.stop()
 
 st.sidebar.markdown(
     '<div class="sidebar-title">MilkShow</div>'

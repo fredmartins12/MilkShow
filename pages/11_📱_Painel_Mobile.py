@@ -9,13 +9,15 @@ from datetime import timedelta
 from utils import (
     init_firebase, carregar_dados, apply_theme,
     get_config, get_custo_racao,
-    PRECO_PADRAO_LEITE, processar_alertas,
+    PRECO_PADRAO_LEITE, processar_alertas, requer_autenticacao,
 )
 
 st.set_page_config(page_title="MilkShow | Mobile", layout="centered", page_icon="📱")
 apply_theme()
 init_firebase()
 carregar_dados()
+if not requer_autenticacao():
+    st.stop()
 
 # CSS compacto para mobile
 st.markdown("""

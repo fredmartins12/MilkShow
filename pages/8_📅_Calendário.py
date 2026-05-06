@@ -10,12 +10,15 @@ from datetime import timedelta
 from utils import (
     init_firebase, carregar_dados, apply_theme, page_banner,
     GESTACAO, DIAS_SECAGEM, DIAS_DIAGNOSTICO, DIAS_PVE, DIAS_DESMAME,
+    requer_autenticacao,
 )
 
 st.set_page_config(page_title="MilkShow | Calendário", layout="wide", page_icon="📅")
 apply_theme()
 init_firebase()
 carregar_dados()
+if not requer_autenticacao():
+    st.stop()
 
 st.sidebar.markdown(
     '<div class="sidebar-title">MilkShow</div>'

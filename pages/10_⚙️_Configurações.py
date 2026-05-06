@@ -16,12 +16,15 @@ from utils import (
     PRECO_PADRAO_LEITE,
     enviar_email_alertas,
     processar_alertas,
+    logout, requer_autenticacao,
 )
 
 st.set_page_config(page_title="MilkShow | Configurações", layout="wide", page_icon="⚙️")
 apply_theme()
 init_firebase()
 carregar_dados()
+if not requer_autenticacao():
+    st.stop()
 
 st.sidebar.markdown(
     '<div class="sidebar-title">MilkShow</div>'
@@ -30,8 +33,9 @@ st.sidebar.markdown(
 )
 page_banner("", "Configurações do Sistema", "Parâmetros, integrações, alertas e administração")
 
-tab_geral, tab_email, tab_bot, tab_preco, tab_perigo = st.tabs([
+tab_geral, tab_operadores, tab_email, tab_bot, tab_preco, tab_perigo = st.tabs([
     "Geral",
+    "👥 Operadores",
     "E-mail / Alertas",
     "Bot IA (WhatsApp)",
     "Preços por Período",
@@ -57,6 +61,88 @@ with tab_geral:
             set_config('nome_fazenda', nome_fazenda)
             set_config('preco_leite',  preco_leite)
             st.success("Configurações salvas!")
+
+# ══════════════════════════════════════════════
+# TAB OPERADORES
+# ══════════════════════════════════════════════
+with tab_operadores:
+    st.subheader("Operadores da Fazenda")
+    st.caption("Adicione os números de WhatsApp dos funcionários que podem usar o bot e o app mobile.")
+
+    db_op = firestore.client()
+    fazenda_id = st.session_state.get('fazenda_id', 'default')
+
+    PERMS_LABELS = {
+        "admin":      "Acesso Total",
+        "ordenha":    "Ordenha",
+        "rebanho":    "Rebanho",
+        "financeiro": "Financeiro",
+        "armazem":    "Armazém",
+    }
+
+    # ── Lista operadores atuais ──
+    def _listar_operadores():
+        docs = db_op.collection('registros_tel').stream()
+        return [d for d in docs if d.to_dict().get('fazenda_id') == fazenda_id]
+
+    operadores = _listar_operadores()
+
+    if operadores:
+        st.markdown(f"**{len(operadores)} operador(es) cadastrado(s)**")
+        for doc in operadores:
+            d = doc.to_dict()
+            perms = d.get('permissoes', ['admin'])
+            perms_str = ', '.join(PERMS_LABELS.get(p, p) for p in perms)
+            col_a, col_b, col_c = st.columns([2, 2, 1])
+            col_a.markdown(f"📱 `{doc.id}`")
+            col_b.markdown(f"👤 {d.get('nome','—')} · *{perms_str}*")
+            if col_c.button("Remover", key=f"rm_{doc.id}"):
+                db_op.collection('registros_tel').document(doc.id).delete()
+                st.success(f"Operador {doc.id} removido.")
+                st.rerun()
+    else:
+        st.info("Nenhum operador cadastrado. Adicione o primeiro abaixo.")
+
+    st.divider()
+    st.markdown("#### Adicionar operador")
+    with st.form("form_add_operador"):
+        col1, col2 = st.columns(2)
+        tel_novo  = col1.text_input("Número de WhatsApp", placeholder="83999998888")
+        nome_novo = col2.text_input("Nome do operador")
+        perms_sel = st.multiselect(
+            "Permissões",
+            options=list(PERMS_LABELS.keys()),
+            default=["ordenha"],
+            format_func=lambda p: PERMS_LABELS[p],
+        )
+        ativo = st.checkbox("Ativo", value=True)
+        if st.form_submit_button("Adicionar", type="primary"):
+            tel_digits = re.sub(r'\D', '', tel_novo)
+            if not tel_digits or len(tel_digits) < 10:
+                st.error("Número inválido.")
+            elif not nome_novo:
+                st.error("Informe o nome do operador.")
+            elif not perms_sel:
+                st.error("Selecione ao menos uma permissão.")
+            else:
+                if not tel_digits.startswith('55'):
+                    tel_digits = '55' + tel_digits
+                db_op.collection('registros_tel').document(tel_digits).set({
+                    'fazenda_id':  fazenda_id,
+                    'nome':        nome_novo,
+                    'permissoes':  perms_sel,
+                    'ativo':       ativo,
+                    'adicionado_em': datetime.datetime.now().isoformat(),
+                })
+                st.success(f"✅ Operador {nome_novo} ({tel_digits}) adicionado!")
+                st.rerun()
+
+    st.divider()
+    st.markdown("#### Link de acesso rápido")
+    st.caption("Compartilhe com os operadores para baixar o app:")
+    bot_url = os.environ.get('BOT_URL', 'http://178.104.252.193')
+    st.code(f"{bot_url}/app/", language=None)
+
 
 # ══════════════════════════════════════════════
 # TAB EMAIL
