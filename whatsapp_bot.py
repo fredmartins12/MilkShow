@@ -992,25 +992,36 @@ TIPOS DE REGISTRO:
    Se a pergunta for sobre algo que não está nos dados, use estado SEM_RESPOSTA.
 
 9. PRODUCAO_MULTIPLA — foto ou lista com produção de múltiplos animais OU múltiplos dias
-   ATENÇÃO: PRODUCAO_MULTIPLA é APENAS quantidade de leite produzida (litros). NÃO peça valor de venda, preço/litro
-   nem valor comercializado — esses campos pertencem a VENDA_LEITE, não a produção. Se o produtor mencionar "fazenda inteira"
-   junto com dados de litros por dia/animal, continue tratando como PRODUCAO_MULTIPLA — não mude de tipo.
+   ATENÇÃO: é APENAS litros produzidos. NUNCA peça valor de venda, preço/litro ou valor comercializado.
    Se os dados já foram extraídos da imagem, NÃO os peça de novo — use-os diretamente.
+   "fazenda inteira", "rebanho todo", "produção geral" → animal = "Rebanho".
+
+   REGRA CRÍTICA — IDENTIFICAÇÃO DE ANIMAL:
+   Qualquer nome que aparecer (no título da tabela, no texto, na foto) deve ser verificado contra
+   a lista ANIMAIS NO REBANHO abaixo. Se o nome NÃO estiver na lista → é nome de produtor ou fazenda
+   → use animal = "Rebanho". Se estiver na lista → é o nome do animal, use-o.
+   NUNCA invente que um nome é de vaca sem confirmar na lista de animais.
+
+   FORMAS QUE O PRODUTOR PODE ENVIAR (todas devem funcionar):
+   - Foto de tabela com datas e litros (mensal)
+   - Foto de quadro/lousa manuscrito
+   - Texto: "Rainha 18, Moreninha 12, Pintada 9"
+   - Texto: "ordenha de hoje 450L" → sem animais → pergunte se quer dividir por vaca ou salvar como Rebanho
+   - Áudio descrevendo a produção
+   - Partes separadas em mensagens diferentes → agrupe e confirme tudo junto
 
    DOIS casos possíveis:
 
-   CASO A — múltiplos animais no mesmo dia (mais comum):
-   Formato: "Rainha 18L, Moreninha 12L, Pintada 9L"
-   Use "dados": {"data": "YYYY-MM-DD", "turno": 1},
+   CASO A — múltiplos animais no mesmo dia:
+   Use "dados": {"data": "YYYY-MM-DD"},
        "itens": [{"animal":"Rainha","litros":18}, {"animal":"Moreninha","litros":12}, ...]
-   Obrigatório em cada item: animal, litros. Opcional: turno.
+   Cada item: animal (verificado na lista), litros. Opcional: turno.
 
-   CASO B — UM animal ao longo de vários dias (tabela mensal / quadro diário):
-   Foto mostra coluna de datas e coluna de litros para UMA vaca só.
-   Use "dados": {"animal": "NomeDaVaca"},
+   CASO B — produção total por dia ao longo de vários dias (tabela mensal):
+   Use "dados": {"animal": "Rebanho"} (ou nome da vaca se confirmado na lista),
        "itens": [{"data":"DD/MM/AAAA","litros":45}, {"data":"DD/MM/AAAA","litros":"//"},...]
-   Entradas com "//" ou "—" ou em branco significam "sem dado" → inclua-as com litros: "//" para que o sistema as ignore.
-   IMPORTANTE: inclua uma entrada por linha da tabela, cada uma com a data correta daquele dia.
+   "//" ou "—" ou em branco = sem dado naquele dia → inclua com litros: "//" (o sistema ignora).
+   Uma entrada por linha, cada uma com a data correta daquele dia.
 
 REGRAS GERAIS:
 - TOLERE erros de digitação — interprete pela intenção, não pela grafia exata.
