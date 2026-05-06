@@ -992,6 +992,11 @@ TIPOS DE REGISTRO:
    Se a pergunta for sobre algo que não está nos dados, use estado SEM_RESPOSTA.
 
 9. PRODUCAO_MULTIPLA — foto ou lista com produção de múltiplos animais OU múltiplos dias
+   ATENÇÃO: PRODUCAO_MULTIPLA é APENAS quantidade de leite produzida (litros). NÃO peça valor de venda, preço/litro
+   nem valor comercializado — esses campos pertencem a VENDA_LEITE, não a produção. Se o produtor mencionar "fazenda inteira"
+   junto com dados de litros por dia/animal, continue tratando como PRODUCAO_MULTIPLA — não mude de tipo.
+   Se os dados já foram extraídos da imagem, NÃO os peça de novo — use-os diretamente.
+
    DOIS casos possíveis:
 
    CASO A — múltiplos animais no mesmo dia (mais comum):
@@ -1003,10 +1008,9 @@ TIPOS DE REGISTRO:
    CASO B — UM animal ao longo de vários dias (tabela mensal / quadro diário):
    Foto mostra coluna de datas e coluna de litros para UMA vaca só.
    Use "dados": {"animal": "NomeDaVaca"},
-       "itens": [{"data":"YYYY-MM-DD","litros":45}, {"data":"YYYY-MM-DD","litros":"//"},...]
+       "itens": [{"data":"DD/MM/AAAA","litros":45}, {"data":"DD/MM/AAAA","litros":"//"},...]
    Entradas com "//" ou "—" ou em branco significam "sem dado" → inclua-as com litros: "//" para que o sistema as ignore.
-   Datas em DD/MM/AAAA devem ser incluídas como estão — o sistema normaliza.
-   IMPORTANTE: sempre preencha o campo "data" de cada item com a data daquele dia, nunca repita a mesma data.
+   IMPORTANTE: inclua uma entrada por linha da tabela, cada uma com a data correta daquele dia.
 
 REGRAS GERAIS:
 - TOLERE erros de digitação — interprete pela intenção, não pela grafia exata.
