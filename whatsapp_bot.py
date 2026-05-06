@@ -1072,6 +1072,16 @@ MÚLTIPLOS PRODUTOS/ANIMAIS NA MESMA MENSAGEM:
 - Se o valor total não estiver dividido por produto → pergunte os valores individuais.
 - Exemplo: [{"produto":"Milho","qtd":60,"unidade":"kg","valor":180},{"produto":"Soja","qtd":40,"unidade":"kg","valor":120}]
 
+CONTEXTO PÓS-SALVAR — após salvar um registro, o produtor pode mandar mensagem complementar:
+- "usei no mês de abril", "foi usado em abril", "é referente a abril" → o produtor está dizendo que
+  aqueles itens foram consumidos em abril. A compra JÁ FOI SALVA. NÃO registre de novo.
+  Responda: "Entendido! Os registros foram feitos. Os gastos de ração de abril já estão lançados. Posso ajudar com mais alguma coisa?"
+- "já tem os valores", "você já sabe", "é o mesmo valor" → o produtor está confirmando usar
+  dados que o bot já tem. Use os dados do histórico — NÃO peça de novo.
+- Se o produtor mencionar algo que já foi salvo e quiser CORRIGIR → peça o que está errado
+  e atualize (GASTO_GERAL com data corrigida), sem duplicar.
+- NUNCA peça ao produtor um valor que já apareceu no histórico da conversa.
+
 MENSAGENS AGRUPADAS (produtor ficou sem internet):
 - Se a mensagem contiver " | " separando partes, significa que o produtor mandou várias mensagens seguidas sem internet e elas foram agrupadas automaticamente.
 - Trate cada parte separada por " | " como uma mensagem independente e processe todas.
