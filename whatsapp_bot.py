@@ -36,6 +36,7 @@ from typing import Optional
 
 import httpx
 from fastapi import FastAPI, Form, Response, Request, Header, HTTPException
+from pydantic import BaseModel
 import firebase_admin
 from firebase_admin import credentials, firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
@@ -1104,6 +1105,406 @@ RESPONDA SEMPRE EM JSON VÁLIDO sem markdown:
 
 
 # ─────────────────────────────────────────────
+# AGENTES POR DOMÍNIO — system prompts focados
+# ─────────────────────────────────────────────
+
+# Seção reutilizada em todos os agentes
+_COMMON_TAIL = """
+LINGUAGEM — aceite variações ortográficas, gírias e regionalismos:
+- "remo"/"remédio"=medicamento, "bicho"/"animal"=animal, "garrote"=novilho, "bezerra/bezerro"=filhote
+- "sim","s","ok","pode","isso","correto","bora","certo" → SALVAR; "não","n","cancela","errado","volta" → CANCELAR
+- CORREÇÃO MID-FLOW: se o produtor corrigir um valor durante a coleta, atualize e mostre resumo corrigido.
+- Valores: "300 reais","R$300","trezentos reais","3 conto"=R$300; Datas: "hoje","ontem","segunda","dia 10"=inferir.
+- Unidades: "saco/sc/bag"=sc, "litro/L/lt"=L, "vidro/frasco/ampola"=dose/frasco.
+
+CONTEXTO PÓS-SALVAR: {ultimo_salvo}
+Se o produtor referenciar "esses itens","isso","os mesmos" refere-se ao último registro. NÃO registre de novo.
+
+REGRAS GERAIS:
+- Extraia o máximo de campos. Pergunte SOMENTE o que estiver faltando, um por vez.
+- Quando tiver todos os obrigatórios, mostre RESUMO COMPLETO e pergunte "Confirma? (sim/não)".
+- NUNCA invente valores monetários. Se faltar, pergunte.
+- MENSAGEM INCOMPREENSÍVEL → estado COLETANDO: "Não entendi bem. Pode explicar de outra forma?"
+- DADOS INCOERENTES (valor negativo, litros >1000/animal, data futura) → pergunte antes de aceitar.
+
+RESPONDA SEMPRE EM JSON VÁLIDO sem markdown:
+{"texto":"mensagem ao produtor","estado":"COLETANDO|CONFIRMANDO|SALVAR|CANCELAR|CONSULTA|SEM_RESPOSTA","tipo":"TIPO_AQUI","dados":{"produto":null,"qtd":null,"unidade":null,"valor":null,"fornecedor":null,"tipo_sanitario":null,"modo":null,"animal":null,"qtd_usada":null,"descricao":null,"categoria":null,"litros":null,"turno":null,"data":null,"laticinio":null,"nome":null,"sexo":null,"status_animal":null,"nasc":null,"lote":null,"id_animal":null,"evento":null,"obs":null,"custo":null,"chave":null,"valor_novo":null,"operacao":null,"protocolo":null,"litros_correto":null,"raca":null,"mae":null},"itens":null}
+"""
+
+SYSTEM_CLASSIFICADOR = """Você é um classificador de mensagens de WhatsApp de produtores rurais de fazendas leiteiras.
+Leia a mensagem e retorne APENAS JSON com o domínio e o tipo mais provável.
+
+DOMÍNIOS e TIPOS:
+- producao: PRODUCAO_LEITE | PRODUCAO_MULTIPLA | VENDA_LEITE | CORRIGIR_PRODUCAO | APAGAR_PRODUCAO
+- financeiro: COMPRA_PRODUTO | GASTO_GERAL | VENDA_ANIMAL | COMPRA_ANIMAL | CORRIGIR_LANCAMENTO | APAGAR_LANCAMENTO
+- rebanho: NOVO_ANIMAL | COMPRA_ANIMAL | REPRODUCAO | ATUALIZAR_ANIMAL
+- armazem: GASTO_SANITARIO | COMPRA_PRODUTO | AGENDAR_SANITARIO | EXECUTAR_PROTOCOLO | APAGAR_ITEM_ESTOQUE
+- config: ALTERAR_CONFIG | AJUSTAR_ESTOQUE
+- consulta: PERGUNTA
+
+EXEMPLOS de roteamento:
+"ordenha de hoje 450 litros" → producao / PRODUCAO_LEITE
+"tirei 320 essa manhã" → producao / PRODUCAO_LEITE
+"a Mimosa deu 22 litros" → producao / PRODUCAO_LEITE
+"capinei 280 hoje" → producao / PRODUCAO_LEITE
+"capinagem hoje foi boa, 420 litros" → producao / PRODUCAO_LEITE
+"ordenhei de manhã, 18 litros da Estrela" → producao / PRODUCAO_LEITE
+"Rainha 25, Mimosa 18, Estrela 21, Pintada 15" → producao / PRODUCAO_MULTIPLA
+"Rainha: 22L, Mimosa: 18L" → producao / PRODUCAO_MULTIPLA
+"[Foto producao do dia] Mimosa: 22L\nRainha: 25L" → producao / PRODUCAO_MULTIPLA
+"[Foto tabela mensal de producao]" → producao / PRODUCAO_MULTIPLA
+"errei a produção da Rainha, foram 22 não 18" → producao / CORRIGIR_PRODUCAO
+"apaga a ordenha errada de ontem" → producao / APAGAR_PRODUCAO
+"comprei 5 sc ração por R$300" → financeiro / COMPRA_PRODUTO
+"trouxe silagem do armazém, R$800" → financeiro / COMPRA_PRODUTO
+"paguei o peão R$1.500 do mês" → financeiro / GASTO_GERAL
+"paguei 3 conto pro peão" → financeiro / GASTO_GERAL
+"abasteci com diesel R$380" → financeiro / GASTO_GERAL
+"conta de luz chegou R$620" → financeiro / GASTO_GERAL
+"consertei a bomba, R$250" → financeiro / GASTO_GERAL
+"paguei veterinário externo R$300" → financeiro / GASTO_GERAL
+"corrija o gasto de diesel, foi R$200 não R$150" → financeiro / CORRIGIR_LANCAMENTO
+"apaga o lançamento duplicado de ontem" → financeiro / APAGAR_LANCAMENTO
+"inseminei a Rainha hoje" → rebanho / REPRODUCAO
+"cobri a Mimosa hoje com o touro" → rebanho / REPRODUCAO
+"muda a raça da Mimosa para Girolanda" → rebanho / ATUALIZAR_ANIMAL
+"apliquei ivermectina no rebanho, R$80" → armazem / GASTO_SANITARIO
+"botei ocitosina na Rainha, R$15" → armazem / GASTO_SANITARIO
+"dei penicilina pra Estrela, R$35" → armazem / GASTO_SANITARIO
+"vacin o rebanho contra aftosa R$200" → armazem / GASTO_SANITARIO
+"ivermctina no gado R$80" → armazem / GASTO_SANITARIO
+"ocitosina na Rainha R$12" → armazem / GASTO_SANITARIO
+"casquiei o rebanho hoje, R$300" → armazem / GASTO_SANITARIO
+"dei remo no rebanho, R$60" → armazem / GASTO_SANITARIO
+"agenda vacinação do rebanho para sexta" → armazem / AGENDAR_SANITARIO
+"realizei a vacinação agendada" → armazem / EXECUTAR_PROTOCOLO
+"executei o protocolo de brucelose" → armazem / EXECUTAR_PROTOCOLO
+"fiz a vacinação que tava agendada" → armazem / EXECUTAR_PROTOCOLO
+"apaga a ivermectina do estoque, acabou" → armazem / APAGAR_ITEM_ESTOQUE
+"muda o preço do leite para R$2,80" → config / ALTERAR_CONFIG
+"muda a meta de produção para 500 litros" → config / ALTERAR_CONFIG
+"altera o custo por litro pra R$1,20" → config / ALTERAR_CONFIG
+"ajusta o estoque de ração para 10 sacos" → config / AJUSTAR_ESTOQUE
+"adiciona 5 sacos de ração no estoque" → config / AJUSTAR_ESTOQUE
+"qual minha produção essa semana?" → consulta / PERGUNTA
+
+REGRAS CRÍTICAS:
+- "Nome1 N, Nome2 N, ..." onde N é um número → PRODUCAO_MULTIPLA (litros por animal), NUNCA REPRODUCAO
+- casquear/casqueamento → armazem / GASTO_SANITARIO (procedimento veterinário), NUNCA GASTO_GERAL
+- "realizei/executei/fiz o protocolo/vacinação agendada" → armazem / EXECUTAR_PROTOCOLO
+- "minha meta é X litros/custo por litro/preço do leite" → config / ALTERAR_CONFIG (NÃO produção!)
+- "adicionar ao estoque/tem X sacos" → config / AJUSTAR_ESTOQUE (não COMPRA_PRODUTO)
+- "botei X no/na/nas + animal/rebanho" onde X é medicamento → armazem / GASTO_SANITARIO, NÃO producao
+- "apliquei/dei/usei/botei + medicamento" → armazem / GASTO_SANITARIO
+- peão/vaqueiro/diarista/funcionário + valor → financeiro / GASTO_GERAL (Mão de Obra)
+- pagar veterinário externo → financeiro / GASTO_GERAL Serviços (não GASTO_SANITARIO)
+- GASTO_SANITARIO = aplicação de produto VETERINÁRIO no animal (ivermectina, vacina, antibiótico, casqueamento, ocitocina, hormônio)
+- GASTO_GERAL = pagamento de serviço externo ou conta (luz, diesel, peão, veterinário externo, manutenção)
+- "meta é X litros" = config, não producao — é uma CONFIGURAÇÃO, não registro de produção
+
+LISTA DE ANIMAIS (para identificar nomes):
+{animais}
+
+Retorne SOMENTE: {"dominio":"...","tipo":"..."}
+"""
+
+SYSTEM_PRODUCAO = """Você é o agente de PRODUÇÃO do MilkShow, assistente de fazenda leiteira.
+Registre ordenha individual, produções múltiplas e vendas de leite.
+
+ANIMAIS EM LACTAÇÃO:
+{animais}
+
+MEMÓRIA DA FAZENDA:
+{memoria}
+
+{ultimo_salvo_bloco}
+
+TIPOS QUE VOCÊ GERENCIA:
+
+PRODUCAO_LEITE — ordenha individual de um único animal
+  Obrigatórios: litros, animal. Opcional: turno (1=manhã,2=tarde,3=noite), data.
+  REGRA CRÍTICA: NUNCA use animal="Rebanho" se houver mais de 1 vaca em lactação.
+  Se o total não especificar animal → liste as vacas e pergunte quanto cada uma produziu.
+  Aceita: "tirei","ordenhei","produção de hoje","manhã deu","tarde foram"
+
+PRODUCAO_MULTIPLA — foto/lista com múltiplos animais OU vários dias
+  É APENAS litros. NUNCA peça valor de venda, preço/litro ou valor total.
+  Se os dados já foram extraídos de imagem, NÃO peça de novo — use diretamente.
+  IDENTIFICAÇÃO: qualquer nome deve ser verificado na lista ANIMAIS. Se NÃO estiver → animal="Rebanho".
+  CASO A (múltiplos animais, mesmo dia): "dados":{"data":"YYYY-MM-DD"}, "itens":[{"animal":"X","litros":18},...]
+  CASO B (produção total por dia, vários dias): "dados":{"animal":"Rebanho"}, "itens":[{"data":"DD/MM","litros":45},...]
+  "//" ou "—" ou em branco = sem dado → inclua com litros:"//"
+  PRODUCAO_MULTIPLA com >5 itens: NO "texto" use resumo compacto ("30 dias, total 1.452 L"), MAS "itens" deve ter o array completo.
+
+VENDA_LEITE — venda de leite ao laticínio/cooperativa
+  Obrigatórios: litros E valor (AMBOS — se faltar um, PERGUNTE).
+  Opcional: laticinio.
+  ATENÇÃO: só use para venda de LEITE. Venda de animal é VENDA_ANIMAL (domínio financeiro).
+  Aceita: "vendi leite","recebi do laticínio","cooperativa pagou"
+
+CORRIGIR_PRODUCAO — corrigir produção já registrada
+  Obrigatórios: animal, data, litros_correto.
+  Opcional: turno.
+  O sistema apaga o registro antigo e salva o valor correto.
+  Mostre resumo: "Corrigir produção de [animal] em [data]: [X] L → [Y] L. Confirma?"
+  Aceita: "errei a produção","corrija a ordenha","foi [X] não [Y]","registrei errado"
+
+APAGAR_PRODUCAO — apagar registro de produção incorreto ou duplicado
+  Obrigatórios: animal, data. Opcional: turno, litros (para identificar qual dos registros).
+  SEMPRE peça confirmação antes de apagar. Mostre: "Apagar produção de [animal] em [data] ([X] L). Confirma?"
+  Aceita: "apaga a ordenha","remove o registro de produção","exclui a produção de"
+""" + _COMMON_TAIL
+
+SYSTEM_FINANCEIRO = """Você é o agente FINANCEIRO do MilkShow, assistente de fazenda leiteira.
+Registre compras de produtos, despesas operacionais, vendas e compras de animais.
+
+ESTOQUE ATUAL (para inferir categoria):
+{estoque}
+
+MEMÓRIA DA FAZENDA:
+{memoria}
+
+{ultimo_salvo_bloco}
+
+TIPOS QUE VOCÊ GERENCIA:
+
+COMPRA_PRODUTO — qualquer compra de produto/insumo para a fazenda
+  Obrigatórios: produto, qtd, unidade, valor. Opcional: fornecedor.
+  Aceita: "comprei","gastei com","paguei por","adquiri","trouxe"
+  CATEGORIA FINANCEIRA — infira pelo produto:
+  - "Ração / Nutrição": ração, milho, soja, silagem, sal mineral, farelo, concentrado, capim, feno
+  - "Medicamento / Sanitário": vacina, vermífugo, antibiótico, hormônio, ocitocina, ivermectina
+  - "Infraestrutura": arame, madeira, cimento, tela, cano, bomba, cerca, material de construção
+  - "Outros": qualquer produto que não se encaixe acima
+  NUNCA coloque infraestrutura ou medicamentos em "Ração / Nutrição".
+  MÚLTIPLOS PRODUTOS: use "itens" (array); se valor total não dividido, pergunte valores individuais.
+
+GASTO_GERAL — despesas operacionais (sem produto físico comprado)
+  Obrigatórios: descricao, valor, categoria.
+  categoria: Mão de Obra | Energia | Combustível | Manutenção | Serviços | Outros
+  - Mão de Obra: peão, funcionário, vaqueiro, diarista, salário
+  - Combustível: diesel, gasolina, álcool, abastecimento
+  - Energia: luz, energia elétrica, conta de energia, conta de água
+  - Manutenção: consertei, reparei, quebrou (sem compra de material)
+  - Serviços: veterinário externo, técnico, agrônomo, inseminador externo
+  DISTINÇÃO: "comprei arame"→COMPRA_PRODUTO; "consertei a cerca"→GASTO_GERAL Manutenção.
+
+VENDA_ANIMAL — venda de vaca, novilha, bezerro ou touro
+  Obrigatórios: animal (nome), valor. Opcional: obs.
+  Ao confirmar: remove animal do rebanho (status=Vendido) e lança receita no financeiro.
+
+COMPRA_ANIMAL — compra de animal (tem valor monetário)
+  Obrigatórios: nome, valor, status_animal. Opcional: sexo, nasc, lote.
+  Aceita: "comprei uma vaca por R$X","adquiri novilha","comprei garrote"
+  status_animal: Lactação | Seca | Novilha | Bezerro
+
+CORRIGIR_LANCAMENTO — corrigir valor ou descrição de lançamento financeiro já registrado
+  Obrigatórios: descricao (fragmento do que foi registrado), data, valor_novo.
+  Opcional: valor (valor antigo para confirmar qual lançamento).
+  O sistema localiza o lançamento pela descrição+data e atualiza o valor.
+  Mostre resumo: "Corrigir lançamento '[desc]' de [data]: R$[X] → R$[Y]. Confirma?"
+  Aceita: "corrija o gasto","foi R$X não R$Y","o valor estava errado","muda o lançamento"
+
+APAGAR_LANCAMENTO — apagar lançamento financeiro incorreto ou duplicado
+  Obrigatórios: descricao (fragmento), data. Opcional: valor (para identificar exato).
+  SEMPRE mostre o que será apagado e peça confirmação: "Apagar '[desc]' de [data] — R$[X]. Confirma?"
+  Aceita: "apaga o lançamento","remove o gasto","exclui a despesa","lançamento duplicado"
+""" + _COMMON_TAIL
+
+SYSTEM_REBANHO = """Você é o agente do REBANHO do MilkShow, assistente de fazenda leiteira.
+Gerencie cadastro de animais e eventos reprodutivos.
+
+ANIMAIS NO REBANHO:
+{animais}
+
+MEMÓRIA DA FAZENDA:
+{memoria}
+
+{ultimo_salvo_bloco}
+
+TIPOS QUE VOCÊ GERENCIA:
+
+NOVO_ANIMAL — nascimento ou cadastro gratuito
+  Obrigatórios: nome, sexo, status_animal. Opcional: nasc, lote, id_animal.
+  status_animal: Lactação | Seca | Novilha | Bezerro
+  ATENÇÃO: se houver valor pago → use COMPRA_ANIMAL (domínio financeiro), não NOVO_ANIMAL.
+
+COMPRA_ANIMAL — compra de animal (tem valor monetário)
+  Obrigatórios: nome, valor, status_animal. Opcional: sexo, nasc, lote.
+
+REPRODUCAO — eventos reprodutivos
+  Obrigatórios: animal, evento, data.
+  DATA É OBRIGATÓRIA — sem data, os cálculos de prenhez/secagem/parto ficam errados.
+  Se não informar data → pergunte: "Qual a data da [inseminação/parto/etc]? (ex: hoje, ontem, dia 15)"
+  evento: Inseminação | Cobertura | Prenhez Confirmada | Prenhez Negativa | Parto | Secagem | Aborto
+  Opcional: obs, custo.
+  Aceita: "inseminei","cobri","pariou","pariu","prenha","emprenhada","secar","perdeu a cria","abortou"
+  CASO "botei pra secar [animal]" sem data → use data de hoje.
+  CASO "vaca pariu" sem especificar qual → pergunte "Qual vaca pariu?"
+  CASO "pariou" + mencionou bezerro → registre REPRODUCAO Parto E pergunte se quer cadastrar o bezerro.
+
+ATUALIZAR_ANIMAL — atualizar dados cadastrais de um animal
+  Obrigatórios: animal (nome exato), e ao menos UM campo para atualizar.
+  Campos atualizáveis: raca, obs, lote, nasc (data nascimento), mae (nome da mãe).
+  Mostre o que vai mudar: "Atualizar [animal]: [campo] → [novo valor]. Confirma?"
+  NÃO use para mudança de status reprodutivo (use REPRODUCAO) nem para venda (use VENDA_ANIMAL).
+  Aceita: "muda a raça","atualiza o lote","coloca na observação","corrige o nascimento","a mãe dela é"
+
+IDENTIFICAÇÃO DE ANIMAL (sempre verificar na lista ANIMAIS NO REBANHO):
+  - Correspondência direta/diminutivo do mesmo nome → aceite se há só 1 na lista com essa raiz
+  - Característica visual ("a pintada","a amarela") sem equivalente na lista → PERGUNTE
+  - Mais de um correspondente possível → pergunte qual
+  - Não encontrado → pergunte "Não encontrei '[nome]' no rebanho. Qual é o nome cadastrado?"
+  - No JSON, campo "animal" deve ser SEMPRE o nome exato como está na lista.
+""" + _COMMON_TAIL
+
+SYSTEM_ARMAZEM = """Você é o agente do ARMAZÉM/SANITÁRIO do MilkShow, assistente de fazenda leiteira.
+Gerencie aplicações de medicamentos, vacinas e uso de insumos do estoque.
+
+ESTOQUE ATUAL:
+{estoque}
+
+ANIMAIS NO REBANHO (para identificar animal em GASTO_SANITARIO):
+{animais}
+
+MEMÓRIA DA FAZENDA:
+{memoria}
+
+{ultimo_salvo_bloco}
+
+TIPOS QUE VOCÊ GERENCIA:
+
+GASTO_SANITARIO — aplicação de medicamento, vacina ou procedimento veterinário
+  Obrigatórios: produto, tipo_sanitario, modo, custo.
+  CUSTO É OBRIGATÓRIO — se não informado, PERGUNTE: "Qual foi o custo desse procedimento?"
+  Se individual: animal. Opcional: qtd_usada.
+  tipo_sanitario (infira): Vacina | Antibiótico | Hormônio | Vermífugo | Casqueamento | Outros
+  Mapeamentos:
+    ocitocina/oxitocina → Hormônio
+    ivermectina/ivomec → Vermífugo
+    penicilina/amoxicilina/enrofloxacina/cortvet → Antibiótico
+    aftosa/brucelose/raiva → Vacina
+    casqueamento/casco → Casqueamento
+  Aceita: "apliquei","dei","usei","tratei","vacinou","curei","botei"
+  VALIDAÇÃO DE ESTOQUE: se o produto NÃO estiver na lista ESTOQUE ATUAL, avise:
+    "Não encontrei [produto] no estoque. Deseja registrar assim mesmo?"
+    Se confirmar → salve normalmente. Se negar → pergunte o nome correto.
+
+COMPRA_PRODUTO (insumos/medicamentos) — quando comprar produto para estoque
+  Obrigatórios: produto, qtd, unidade, valor. Opcional: fornecedor.
+  Categoria "Medicamento / Sanitário" para vacinas, vermífugos, antibióticos, hormônios.
+  Categoria "Ração / Nutrição" para ração, concentrado, sal mineral.
+  Categoria "Infraestrutura" para materiais de construção.
+
+AGENDAR_SANITARIO — agendar protocolo veterinário futuro (vacinação, exame, tratamento)
+  Obrigatórios: tipo_sanitario, protocolo (nome do procedimento/vacina), data (data futura), animal (ou "Rebanho").
+  Opcional: obs, custo (estimado).
+  Este tipo AGENDA para o futuro — diferente de GASTO_SANITARIO que registra algo já feito.
+  Aceita: "agenda vacinação","programa exame","marcar tratamento","protocolo para","agendar"
+  Mostre resumo com data futura: "Agendar: [protocolo] para [animal] em [data]. Confirma?"
+  DATA É OBRIGATÓRIA — se não informar, pergunte: "Para qual data quer agendar?"
+
+EXECUTAR_PROTOCOLO — marcar protocolo sanitário agendado como executado/realizado
+  Obrigatórios: protocolo (fragmento do nome) e/ou animal.
+  Opcional: data (data em que foi executado, padrão = hoje), custo (real, se diferente do estimado).
+  O sistema busca o protocolo pendente (executado=false) mais próximo que bata com os dados.
+  Aceita: "executei","realizei","fiz a vacinação","cumpri o protocolo","fizemos o tratamento","já apliquei"
+  Mostre o que encontrou antes de confirmar: "Marcar como executado: [protocolo] — [animal] agendado em [data]. Confirma?"
+
+APAGAR_ITEM_ESTOQUE — remover item completamente do armazém
+  Obrigatórios: produto (nome do item a remover).
+  Use quando o produto acabou, foi descartado ou foi cadastrado errado.
+  SEMPRE peça confirmação: "Remover [produto] do estoque. Confirma?"
+  Aceita: "remove do estoque","apaga o item","exclui do armazém","acabou e não tenho mais","tira o [produto]"
+""" + _COMMON_TAIL
+
+SYSTEM_CONSULTA = """Você é o agente de CONSULTAS do MilkShow, assistente de fazenda leiteira.
+Responda perguntas sobre dados da fazenda com base no contexto fornecido.
+
+ANIMAIS NO REBANHO:
+{animais}
+
+ESTOQUE ATUAL:
+{estoque}
+
+DADOS DA FAZENDA:
+{dados_fazenda}
+
+MEMÓRIA DA FAZENDA:
+{memoria}
+
+{ultimo_salvo_bloco}
+
+TIPOS QUE VOCÊ GERENCIA:
+
+PERGUNTA — produtor quer saber algo sobre os dados da fazenda
+  Use estado CONSULTA. Responda com os dados disponíveis no contexto DADOS DA FAZENDA.
+  Resposta: curta e direta (máximo 4 linhas).
+
+  Perguntas gerais: "qual minha produção esta semana?","quanto gastei?","quais vacas estão secas?",
+    "qual vaca produz mais?","qual meu saldo?","quanto tenho de ivermectina?","quantos animais tenho?"
+
+  Perguntas de AGENDA (use seção AGENDA dos dados):
+    "o que tenho pra fazer hoje?","tem alguma vaca pra inseminar?","tem parto previsto?","o que ta pendente?"
+
+  Perguntas de RENTABILIDADE (use seção RENTABILIDADE POR ANIMAL dos dados):
+    "quanto custa produzir um litro?","qual vaca dá mais prejuízo?","estou tendo lucro?",
+    "qual o custo por litro da [vaca]?","vale a pena manter a [vaca]?","qual minha vaca mais rentável?"
+    → Cite custo/L, lucro/L e status (OK/ATENCAO/PREJUIZO) de cada animal relevante.
+
+  Se a pergunta for sobre algo que não está nos dados → estado SEM_RESPOSTA:
+    "Desculpe, não consigo responder a isso ainda."
+
+RESPONDA SEMPRE EM JSON VÁLIDO sem markdown:
+{"texto":"resposta ao produtor","estado":"CONSULTA|SEM_RESPOSTA","tipo":"PERGUNTA","dados":{},"itens":null}
+"""
+
+SYSTEM_CONFIG = """Você é o agente de CONFIGURAÇÃO do MilkShow, assistente de fazenda leiteira.
+Gerencie configurações da fazenda e ajustes de estoque.
+
+ESTOQUE ATUAL:
+{estoque}
+
+CONFIGURAÇÕES ATUAIS DA FAZENDA:
+{dados_fazenda}
+
+MEMÓRIA DA FAZENDA:
+{memoria}
+
+{ultimo_salvo_bloco}
+
+TIPOS QUE VOCÊ GERENCIA:
+
+ALTERAR_CONFIG — alterar configuração da fazenda
+  Obrigatórios: chave, valor_novo.
+  chave pode ser:
+    "preco_leite" → preço por litro de leite pago ao produtor
+    "custo_por_litro" → custo médio de produção por litro
+    "meta_producao" → meta diária de litros
+    "nome_fazenda" → nome da fazenda
+  Mostre o que vai mudar: "Mudar [chave] de [atual] para [novo]. Confirma?"
+  Aceita: "muda o preço do leite","meu custo por litro é","meta de produção é","quero definir","atualiza"
+
+AJUSTAR_ESTOQUE — corrigir quantidade de um item no armazém manualmente
+  Obrigatórios: produto, qtd, operacao.
+  operacao: "definir" (setar exato), "adicionar" (somar), "remover" (subtrair).
+  Mostre resumo: "Ajustar [produto]: [operacao] [X] [un]. Confirma?"
+  Aceita: "ajusta o estoque","tenho [X] sacos de","corrija a quantidade de","inventário de"
+  Exemplo: "tenho 8 sacos de ração" → AJUSTAR_ESTOQUE, produto=ração, qtd=8, operacao=definir
+""" + _COMMON_TAIL
+
+# Mapeamento domínio → quais seções de dados_fazenda carregar
+_SECOES_POR_DOMINIO = {
+    "producao":   ["producao"],
+    "financeiro": ["financeiro", "estoque"],
+    "rebanho":    ["animais", "reproducao"],
+    "armazem":    ["estoque", "sanitario"],
+    "config":     ["config", "estoque"],
+    "consulta":   None,   # None = todas as seções
+    "desconhecido": None,
+}
+
+# ─────────────────────────────────────────────
 # CASCATA DE IAs — prioridade: grátis → pago
 # Ordem: Groq (LLaMA grátis) → Gemini Flash (grátis) → Claude Haiku (pago)
 # ─────────────────────────────────────────────
@@ -1291,46 +1692,184 @@ def _salvar_memoria(fazenda_id: str, chave: str, valor):
         log.warning(f"salvar_memoria: {e}")
 
 
-def _chamar_claude(historico: list, animais: str, estoque: str = "",
-                   dados_fazenda: str = "", memoria: str = "",
-                   ultimo_salvo: dict = None) -> dict:
-    """Chama IAs em cascata: Groq → Gemini → Claude Haiku.
-    Usa modelo rápido (8B) para mensagens simples.
-    """
-    # Monta bloco de último registro salvo para contexto pós-salvar
-    if ultimo_salvo:
-        tipo_us  = ultimo_salvo.get("tipo", "")
-        resp_us  = ultimo_salvo.get("resposta", "")
-        itens_us = ultimo_salvo.get("itens") or []
-        dados_us = ultimo_salvo.get("dados") or {}
-        if itens_us:
-            resumo_itens = ", ".join(
-                f"{it.get('produto') or it.get('animal') or 'item'}"
-                f" {it.get('qtd','')}{it.get('unidade','')} R${it.get('valor','?')}"
-                for it in itens_us[:10]
-            )
-            ctx_ultimo = f"ÚLTIMO REGISTRO SALVO: {tipo_us} — {resumo_itens}."
-        else:
-            animal = dados_us.get('animal','')
-            valor  = dados_us.get('valor','')
-            ctx_ultimo = f"ÚLTIMO REGISTRO SALVO: {tipo_us} — animal: {animal}, valor: R${valor}."
-        ctx_ultimo += " Se o produtor referenciar 'esses itens', 'isso', 'os mesmos' etc., está se referindo a este registro."
+def _ctx_ultimo_salvo(ultimo_salvo: dict | None) -> str:
+    """Formata bloco de contexto do último registro salvo."""
+    if not ultimo_salvo:
+        return ""
+    tipo_us  = ultimo_salvo.get("tipo", "")
+    itens_us = ultimo_salvo.get("itens") or []
+    dados_us = ultimo_salvo.get("dados") or {}
+    if itens_us:
+        resumo = ", ".join(
+            f"{it.get('produto') or it.get('animal') or 'item'}"
+            f" {it.get('qtd','')}{it.get('unidade','')} R${it.get('valor','?')}"
+            for it in itens_us[:10]
+        )
+        ctx = f"ÚLTIMO REGISTRO SALVO: {tipo_us} — {resumo}."
     else:
-        ctx_ultimo = ""
+        animal = dados_us.get('animal', '')
+        valor  = dados_us.get('valor', '')
+        ctx = f"ÚLTIMO REGISTRO SALVO: {tipo_us} — animal: {animal}, valor: R${valor}."
+    return ctx + " Se o produtor referenciar 'esses itens', 'isso', 'os mesmos' etc., está se referindo a este registro."
 
-    system = (SYSTEM
-              .replace("{animais}", animais)
-              .replace("{estoque}", estoque)
-              .replace("{dados_fazenda}", dados_fazenda)
-              .replace("{memoria}", memoria or "nenhuma preferência salva")
-              .replace("{ultimo_salvo}", ctx_ultimo))
 
-    eh_simples = _eh_mensagem_simples(historico)
+# Tipos por domínio (para roteamento direto quando tipo já é conhecido)
+_TIPOS_POR_DOMINIO: dict[str, set] = {
+    "producao":   {"PRODUCAO_LEITE", "PRODUCAO_MULTIPLA", "VENDA_LEITE",
+                   "CORRIGIR_PRODUCAO", "APAGAR_PRODUCAO"},
+    "financeiro": {"COMPRA_PRODUTO", "GASTO_GERAL", "VENDA_ANIMAL", "COMPRA_ANIMAL",
+                   "CORRIGIR_LANCAMENTO", "APAGAR_LANCAMENTO"},
+    "rebanho":    {"NOVO_ANIMAL", "COMPRA_ANIMAL", "REPRODUCAO", "ATUALIZAR_ANIMAL"},
+    "armazem":    {"GASTO_SANITARIO", "AGENDAR_SANITARIO", "EXECUTAR_PROTOCOLO", "APAGAR_ITEM_ESTOQUE"},
+    "config":     {"ALTERAR_CONFIG", "AJUSTAR_ESTOQUE"},
+    "consulta":   {"PERGUNTA"},
+}
 
-    raw = None
-    # Groq com modelo selecionado por complexidade
-    raw = _ia_groq(system, historico, fast=eh_simples)
-    # Fallback cascata
+_DOMINIO_POR_TIPO: dict[str, str] = {
+    t: d for d, ts in _TIPOS_POR_DOMINIO.items() for t in ts
+}
+
+
+def _pre_classificar_keywords(texto: str) -> tuple[str, str] | None:
+    """Classificação rápida por palavras-chave antes de chamar a IA.
+    Evita classificações erradas para casos muito comuns e ambíguos.
+    Retorna (dominio, tipo) ou None para deixar a IA decidir.
+    """
+    lower = texto.lower()
+
+    # ── Veterinário/sanitário — palavras de medicação/procedimento
+    _meds = ['ivermectina','ivermctina','ivermectin','ocitocina','ocitosina','oxitocina',
+             'penicilina','penicilna','antibiotico','antibiótico','vermifugo','vermífugo',
+             'vacina','vacinei','vacinação','aftosa','brucelose','brucel','mastite',
+             'cortvet','cortisona','dexametasona','vitamina','mineral','antiparasit',
+             'casquei','casquiei','casqueamento','casqueei','casco','casquear','casquei',
+             'botei remo','dei remo','remo no','remo nas','remo pras',
+             'botei ocitocina','botei ocitosina','botei penicilina','botei ivermectina',
+             'usei dose','usei doses','apliquei dose','apliquei doses',
+             'dei remédio','dei rémédio','dei remedio']
+    if any(k in lower for k in _meds):
+        # Se for agendamento futuro
+        if any(k in lower for k in ['agenda','agendar','próxima','próximo','semana que vem','dia ',
+                                      'para sexta','para quinta','para segunda','para terça','para quarta']):
+            return ("armazem", "AGENDAR_SANITARIO")
+        # Se for execução de protocolo já agendado
+        if any(k in lower for k in ['executei','realizei','fiz o protocolo','fiz a vacinação',
+                                      'executei o protocolo','realizei o protocolo']):
+            return ("armazem", "EXECUTAR_PROTOCOLO")
+        return ("armazem", "GASTO_SANITARIO")
+
+    # ── Configuração — meta, custo, preço do leite
+    if any(k in lower for k in ['minha meta','meta de produção','meta é','meta e ','meta:',
+                                   'custo por litro','custo/litro','preço por litro',
+                                   'preco por litro','valor do leite','pagar por litro',
+                                   'laticinio vai pagar','laticínio vai pagar',
+                                   'vai pagar por litro','vai pagar r$','cooperativa vai pagar']):
+        return ("config", "ALTERAR_CONFIG")
+
+    # ── Execução de protocolo já agendado (sem nome de medicamento)
+    if any(k in lower for k in ['executei a vacinação','realizei a vacinação','fiz a vacinação',
+                                  'executei o protocolo','realizei o protocolo',
+                                  'executei o tratamento','realizei o tratamento']):
+        return ("armazem", "EXECUTAR_PROTOCOLO")
+
+    # ── Serviço externo (vet, técnico) — sempre GASTO_GERAL (antes de checar vacina/med)
+    if any(k in lower for k in ['paguei veterinário','paguei o veterinário','paguei vet ',
+                                  'paguei o vet','visita do vet','honorários do vet',
+                                  'consulta veterinária','taxa de visita','visita técnica',
+                                  'paguei técnico','paguei o técnico','paguei inseminador']):
+        return ("financeiro", "GASTO_GERAL")
+
+    # ── Peão/vaqueiro/diarista — sempre GASTO_GERAL
+    if any(k in lower for k in ['paguei o peão','paguei peão','paguei o vaqueiro',
+                                  'paguei diarista','paguei o diarista','paguei funcionário',
+                                  'salário do peão','salário do vaqueiro','conto pro peão',
+                                  'conto pra diarista','paguei pro peão','paguei pra diarista']):
+        return ("financeiro", "GASTO_GERAL")
+
+    return None
+
+
+def _classificar_dominio(historico: list, animais: str) -> tuple[str, str]:
+    """Usa Groq 8B (rápido) para classificar domínio e tipo da última mensagem.
+    Retorna (dominio, tipo). Em caso de falha retorna ("desconhecido", "DESCONHECIDO").
+    """
+    # Tenta pré-classificação por palavras-chave antes de chamar a IA
+    ultima_msg = historico[-1]["content"] if historico else ""
+    pre = _pre_classificar_keywords(ultima_msg)
+    if pre:
+        log.info(f"Pre-classificador → domínio={pre[0]}, tipo={pre[1]}")
+        return pre
+
+    system = SYSTEM_CLASSIFICADOR.replace("{animais}", animais[:500])
+    # Passa apenas a última mensagem do usuário para manter o classificador rápido
+    ultima = [historico[-1]] if historico else []
+    raw = _ia_groq(system, ultima, fast=True)
+    if not raw:
+        return ("desconhecido", "DESCONHECIDO")
+    parsed = _extrair_json(raw)
+    if not parsed:
+        return ("desconhecido", "DESCONHECIDO")
+    dominio = parsed.get("dominio", "desconhecido")
+    tipo    = parsed.get("tipo", "DESCONHECIDO")
+    log.info(f"Classificador → domínio={dominio}, tipo={tipo}")
+    return (dominio, tipo)
+
+
+def _chamar_agente(dominio: str, historico: list, animais: str, estoque: str,
+                   dados_fazenda: str, memoria: str, ultimo_salvo: dict | None) -> dict:
+    """Chama o agente específico do domínio com seu prompt focado.
+    Fallback: cascata Groq 70B → Gemini → Claude → SYSTEM monolítico.
+    """
+    ctx_ultimo = _ctx_ultimo_salvo(ultimo_salvo)
+    ultimo_salvo_bloco = f"CONTEXTO PÓS-SALVAR: {ctx_ultimo}" if ctx_ultimo else ""
+    mem = memoria or "nenhuma preferência salva"
+
+    # Seleciona system prompt do agente correto
+    if dominio == "producao":
+        system = (SYSTEM_PRODUCAO
+                  .replace("{animais}", animais)
+                  .replace("{memoria}", mem)
+                  .replace("{ultimo_salvo_bloco}", ultimo_salvo_bloco))
+    elif dominio == "financeiro":
+        system = (SYSTEM_FINANCEIRO
+                  .replace("{estoque}", estoque)
+                  .replace("{memoria}", mem)
+                  .replace("{ultimo_salvo_bloco}", ultimo_salvo_bloco))
+    elif dominio == "rebanho":
+        system = (SYSTEM_REBANHO
+                  .replace("{animais}", animais)
+                  .replace("{memoria}", mem)
+                  .replace("{ultimo_salvo_bloco}", ultimo_salvo_bloco))
+    elif dominio == "armazem":
+        system = (SYSTEM_ARMAZEM
+                  .replace("{estoque}", estoque)
+                  .replace("{animais}", animais)
+                  .replace("{memoria}", mem)
+                  .replace("{ultimo_salvo_bloco}", ultimo_salvo_bloco))
+    elif dominio == "consulta":
+        system = (SYSTEM_CONSULTA
+                  .replace("{animais}", animais)
+                  .replace("{estoque}", estoque)
+                  .replace("{dados_fazenda}", dados_fazenda)
+                  .replace("{memoria}", mem)
+                  .replace("{ultimo_salvo_bloco}", ultimo_salvo_bloco))
+    elif dominio == "config":
+        system = (SYSTEM_CONFIG
+                  .replace("{estoque}", estoque)
+                  .replace("{dados_fazenda}", dados_fazenda)
+                  .replace("{memoria}", mem)
+                  .replace("{ultimo_salvo_bloco}", ultimo_salvo_bloco))
+    else:
+        # Fallback: SYSTEM monolítico original
+        system = (SYSTEM
+                  .replace("{animais}", animais)
+                  .replace("{estoque}", estoque)
+                  .replace("{dados_fazenda}", dados_fazenda)
+                  .replace("{memoria}", mem)
+                  .replace("{ultimo_salvo}", ctx_ultimo))
+
+    # Cascata: Groq 70B → Gemini → Claude Haiku
+    raw = _ia_groq(system, historico, fast=False)
     if not raw:
         raw = _ia_gemini(system, historico)
     if not raw:
@@ -1343,6 +1882,24 @@ def _chamar_claude(historico: list, animais: str, estoque: str = "",
     if not parsed:
         return {"texto": raw[:300], "estado": "COLETANDO", "tipo": None, "dados": {}}
     return parsed
+
+
+def _chamar_claude(historico: list, animais: str, estoque: str = "",
+                   dados_fazenda: str = "", memoria: str = "",
+                   ultimo_salvo: dict = None, tipo_atual: str = None) -> dict:
+    """Orquestra agentes por domínio: Classificador → Agente Domínio → resultado.
+    tipo_atual: tipo já identificado em conversa anterior (pula classificação).
+    """
+    # Se o tipo já é conhecido, roteia direto para o agente certo
+    if tipo_atual and tipo_atual in _DOMINIO_POR_TIPO:
+        dominio = _DOMINIO_POR_TIPO[tipo_atual]
+        log.info(f"Roteamento direto → domínio={dominio} (tipo={tipo_atual})")
+    else:
+        # Primeira mensagem ou tipo desconhecido → classificador rápido
+        dominio, _ = _classificar_dominio(historico, animais)
+
+    return _chamar_agente(dominio, historico, animais, estoque,
+                          dados_fazenda, memoria, ultimo_salvo)
 
 
 def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list] = None) -> str:
@@ -1402,22 +1959,81 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
             log.info(f"[{tel}] fast_path: {fp['tipo']}")
             if fp["estado"] == "SALVAR" and fp.get("tipo") and fp.get("dados"):
                 if _tem_permissao(permissoes, fp["tipo"]):
-                    resposta_fp = _salvar(fp["tipo"], fp["dados"], fazenda_id)
+                    resposta_fp = _salvar(fp["tipo"], fp["dados"], fazenda_id, registrado_por=tel)
                     _clear_conv(tel)
                     return resposta_fp
                 else:
                     _clear_conv(tel)
                     return _msg_sem_permissao(fp["tipo"])
 
-    # Contexto seletivo: carrega apenas as seções necessárias para a pergunta
-    secoes = _classificar_pergunta(texto)
-    dados_fazenda = _ctx_dados_fazenda(fazenda_id, secoes) if secoes else ""
-    memoria = _get_memoria_fazenda(fazenda_id)
-    ultimo_salvo = conv.get("ultimo_salvo")   # contexto do último registro salvo
+    # Contexto seletivo: para consultas carrega dados da fazenda; outros domínios não precisam
+    tipo_atual = conv.get("tipo")  # tipo já conhecido de turno anterior
+    memoria    = _get_memoria_fazenda(fazenda_id)
+    ultimo_salvo = conv.get("ultimo_salvo")
 
-    parsed   = _chamar_claude(hist, animais, estoque, dados_fazenda, memoria, ultimo_salvo)
+    # Determina domínio para decidir quais seções carregar
+    if tipo_atual and tipo_atual in _DOMINIO_POR_TIPO:
+        dominio_hint = _DOMINIO_POR_TIPO[tipo_atual]
+    else:
+        dominio_hint = None  # será descoberto pelo classificador
+
+    # Carrega dados_fazenda conforme o domínio
+    if dominio_hint in ("consulta", "config") or (dominio_hint is None and _classificar_pergunta(texto)):
+        secoes = _classificar_pergunta(texto)
+        dados_fazenda = _ctx_dados_fazenda(fazenda_id, secoes) if secoes else _ctx_dados_fazenda(fazenda_id, None)
+    else:
+        dados_fazenda = ""
+
+    parsed   = _chamar_claude(hist, animais, estoque, dados_fazenda, memoria, ultimo_salvo,
+                               tipo_atual=tipo_atual)
     estado   = parsed.get("estado", "COLETANDO")
-    tipo     = parsed.get("tipo") or conv.get("tipo")
+    tipo_raw = parsed.get("tipo") or conv.get("tipo")
+    # Normaliza tipos hallucinations → tipos canônicos
+    _TIPO_ALIASES = {
+        # Producao
+        "REGISTRAR_PRODUCAO":  "PRODUCAO_LEITE",
+        "REGISTRO_PRODUCAO":   "PRODUCAO_LEITE",
+        "PRODUCAO":            "PRODUCAO_LEITE",
+        "ORDENHA":             "PRODUCAO_LEITE",
+        "CAPINA":              "PRODUCAO_LEITE",
+        "COLHEITA_LEITE":      "PRODUCAO_LEITE",
+        "COLHEITA":            "PRODUCAO_LEITE",
+        "LEITE":               "PRODUCAO_LEITE",
+        "MULTIPLO":            "PRODUCAO_MULTIPLA",
+        "PRODUCAO_TOTAL":      "PRODUCAO_MULTIPLA",
+        # Sanitario
+        "REGISTRAR_SANITARIO": "GASTO_SANITARIO",
+        "REGISTRO_SANITARIO":  "GASTO_SANITARIO",
+        "SANITARIO":           "GASTO_SANITARIO",
+        "TRATAMENTO":          "GASTO_SANITARIO",
+        "TRATAMENTO_ANIMAL":   "GASTO_SANITARIO",
+        "APLICACAO":           "GASTO_SANITARIO",
+        "VACINACAO":           "GASTO_SANITARIO",
+        "VERMIFUGACAO":        "GASTO_SANITARIO",
+        # Financeiro
+        "LANCAMENTO":          "GASTO_GERAL",
+        "DESPESA":             "GASTO_GERAL",
+        "COMPRA":              "COMPRA_PRODUTO",
+        "VENDA":               "VENDA_LEITE",
+        # Rebanho
+        "ANIMAL":              "NOVO_ANIMAL",
+        "CADASTRO_ANIMAL":     "NOVO_ANIMAL",
+        "NASCIMENTO":          "NOVO_ANIMAL",
+        "REPRODUCAO_ANIMAL":   "REPRODUCAO",
+        "EVENTO_REPRODUTIVO":  "REPRODUCAO",
+        "ATUALIZACAO_ANIMAL":  "ATUALIZAR_ANIMAL",
+        # Protocolo
+        "PROTOCOLO":           "EXECUTAR_PROTOCOLO",
+        "EXECUTAR":            "EXECUTAR_PROTOCOLO",
+        "AGENDAR":             "AGENDAR_SANITARIO",
+        # Config
+        "SALVAR_PREFERENCIA":  "ALTERAR_CONFIG",
+        "CONFIGURACAO":        "ALTERAR_CONFIG",
+        "CONFIG":              "ALTERAR_CONFIG",
+        "PREFERENCIA":         "ALTERAR_CONFIG",
+        "AJUSTE_ESTOQUE":      "AJUSTAR_ESTOQUE",
+    }
+    tipo = _TIPO_ALIASES.get(tipo_raw, tipo_raw) if tipo_raw else None
     novos    = {k: v for k, v in (parsed.get("dados") or {}).items() if v is not None}
     dados    = {**(conv.get("dados") or {}), **novos}
     resposta = parsed.get("texto", "Nao entendi. Tente novamente.")
@@ -1451,20 +2067,20 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
                         pass
             if tipo == "PRODUCAO_MULTIPLA" and itens:
                 dados["itens"] = itens
-                resposta = _salvar(tipo, dados, fazenda_id)
+                resposta = _salvar(tipo, dados, fazenda_id, registrado_por=tel)
                 ultimo_salvo = {"tipo": tipo, "dados": dados, "itens": itens, "resposta": resposta}
             elif itens and isinstance(itens, list) and len(itens) > 1:
                 msgs = []
                 forn = dados.get("fornecedor") or ""
                 for item in itens:
                     item.setdefault("fornecedor", forn)
-                    msgs.append(_salvar(tipo, item, fazenda_id))
+                    msgs.append(_salvar(tipo, item, fazenda_id, registrado_por=tel))
                 resposta = f"*{len(itens)} itens salvos:*\n" + "\n".join(
                     m.replace("*Salvo!*\n", "- ") for m in msgs
                 )
                 ultimo_salvo = {"tipo": tipo, "dados": dados, "itens": itens, "resposta": resposta}
             else:
-                resposta = _salvar(tipo, dados, fazenda_id)
+                resposta = _salvar(tipo, dados, fazenda_id, registrado_por=tel)
                 ultimo_salvo = {"tipo": tipo, "dados": dados, "itens": None, "resposta": resposta}
         except Exception as e:
             log.error(f"Erro ao salvar: {e}")
@@ -1508,7 +2124,7 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
 # ─────────────────────────────────────────────
 # SALVAR NO FIREBASE
 # ─────────────────────────────────────────────
-def _salvar(tipo: str, dados: dict, fazenda_id: str) -> str:
+def _salvar(tipo: str, dados: dict, fazenda_id: str, registrado_por: str = "Bot WhatsApp") -> str:
     hoje = str(datetime.date.today())
 
     # Invalida cache das coleções que podem ser alteradas por este registro
@@ -1517,11 +2133,22 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str) -> str:
     _cache_del(f"prod:{fazenda_id}")
     _cache_del(f"fin:{fazenda_id}")
 
-    def _fin(cat, desc, valor, animal=None, tipo_fin="Geral"):
+    def _fin(cat, desc, valor, animal=None, tipo_fin="despesa", data=None):
+        """Salva lançamento financeiro com todos os campos que o app espera."""
         _coll(fazenda_id, "financeiro").add({
-            "data": hoje, "cat": cat, "desc": desc,
-            "valor": float(valor or 0), "tipo": tipo_fin,
-            "animal": animal, "origem": "whatsapp",
+            "data":           data or hoje,
+            # categoria: salvo nos dois campos que o app usa (cat legacy + categoria atual)
+            "cat":            cat,
+            "categoria":      cat,
+            # descricao: salvo nos dois campos por compatibilidade
+            "desc":           desc,
+            "descricao":      desc,
+            "valor":          float(valor or 0),
+            # tipo: "receita" ou "despesa" — padrão é despesa
+            "tipo":           tipo_fin,
+            "animal":         animal,
+            "origem":         "whatsapp",
+            "registrado_por": registrado_por,
         })
 
     def _estoque_entrada(item, qtd, un, valor_total):
@@ -1557,8 +2184,9 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str) -> str:
         animal, _  = _resolver_animal(fazenda_id, animal_raw)
         val    = _parse_float(dados.get("valor"))
         obs    = dados.get("obs") or ""
+        data_venda = dados.get("data") or hoje
         desc   = f"Venda {animal}" + (f" ({obs})" if obs else "")
-        _fin("Venda de Animal", desc, val, animal=animal, tipo_fin="Geral")
+        _fin("Venda de Animal", desc, val, animal=animal, tipo_fin="receita", data=data_venda)
         # Remove do rebanho
         ani_docs = list(_coll(fazenda_id, "animais").where(filter=FieldFilter("nome", "==", animal)).stream())
         for d in ani_docs:
@@ -1588,8 +2216,9 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str) -> str:
             "prenhez": False, "colostro": False,
             "dt_insem": None, "dt_parto": None, "mae_id": None,
         })
+        data_compra_ani = dados.get("data") or hoje
         if val > 0:
-            _fin("Compra de Animal", f"Compra {nome}", val, animal=nome, tipo_fin="Geral")
+            _fin("Compra de Animal", f"Compra {nome}", val, animal=nome, tipo_fin="despesa", data=data_compra_ani)
         return f"*Salvo!*\n{nome} ({status}) cadastrada. R$ {val:.2f} lançado no financeiro."
 
     # ── COMPRA_PRODUTO ────────────────────────
@@ -1599,25 +2228,38 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str) -> str:
         un    = dados.get("unidade") or "un"
         val   = _parse_float(dados.get("valor"))
         forn  = dados.get("fornecedor") or ""
+        data_compra = dados.get("data") or hoje
 
-        # BUG7: sem acentos para casar com entradas como "antibiotico", "hormonio"
-        med_keywords = ["ocitocina","oxitocina","vacina","antibiotico","antibi","hormonio",
-                        "vermifugo","ivermec","penicilina","calmosil","cortvet","oxytocin",
-                        "prostagla","amoxicilina","enroflox","brucelose","aftosa","raiva"]
+        # Categoria: usa o que a IA classificou; fallback por palavra-chave (4 categorias)
         import unicodedata
         def _sem_acento(s):
             return ''.join(c for c in unicodedata.normalize('NFD', s)
                            if unicodedata.category(c) != 'Mn')
-        cat = ("Medicamento / Sanitário"
-               if any(k in _sem_acento(prod.lower()) for k in med_keywords)
-               else "Ração / Nutrição")
+        _p = _sem_acento(prod.lower())
+        _CATS_VALIDAS = {"Ração / Nutrição", "Medicamento / Sanitário", "Infraestrutura", "Outros"}
+        cat_ia = dados.get("categoria") or ""
+        if cat_ia in _CATS_VALIDAS:
+            cat = cat_ia
+        elif any(k in _p for k in ["ocitocina","oxitocina","vacina","antibiotico","antibi",
+                                    "hormonio","vermifugo","ivermec","penicilina","calmosil",
+                                    "cortvet","oxytocin","prostagla","amoxicilina","enroflox",
+                                    "brucelose","aftosa","raiva"]):
+            cat = "Medicamento / Sanitário"
+        elif any(k in _p for k in ["racao","milho","soja","silagem","sal mineral","farelo",
+                                    "concentrado","capim","feno","minerali"]):
+            cat = "Ração / Nutrição"
+        elif any(k in _p for k in ["arame","madeira","cimento","tela","cano","bomba",
+                                    "cerca","construcao","material","bomba"]):
+            cat = "Infraestrutura"
+        else:
+            cat = "Outros"
 
         _estoque_entrada(prod, qtd, un, val)
 
         desc = f"Compra {prod} ({qtd:.1f} {un})"
         if forn:
             desc += f" — {forn}"
-        _fin(cat, desc, val)
+        _fin(cat, desc, val, data=data_compra)
 
         return (f"*Salvo!*\n"
                 f"{prod} ({qtd:.1f} {un}) registrado no Armazém.\n"
@@ -1632,15 +2274,16 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str) -> str:
         custo    = _parse_float(dados.get("custo") or dados.get("valor"))
         qtd_u    = _parse_float(dados.get("qtd_usada"))
 
+        data_san = dados.get("data") or hoje
         _coll(fazenda_id, "sanitario").add({
-            "data": hoje, "tipo": tipo_san, "prod": prod,
+            "data": data_san, "tipo": tipo_san, "prod": prod,
             "modo": modo, "animal": animal,
             "custo": custo, "obs": "Registrado via WhatsApp",
         })
 
         if custo > 0:
             _fin("Medicamento / Sanitário", f"{tipo_san} — {prod}", custo,
-                 animal=animal, tipo_fin=modo)
+                 animal=animal, tipo_fin="despesa", data=data_san)
 
         avisos = []
         if qtd_u > 0:
@@ -1661,7 +2304,8 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str) -> str:
         desc  = dados.get("descricao") or "Gasto geral"
         val   = _parse_float(dados.get("valor"))
         cat   = dados.get("categoria") or "Outros"
-        _fin(cat, desc, val)
+        data_geral = dados.get("data") or hoje
+        _fin(cat, desc, val, data=data_geral)
         return f"*Salvo!*\n{desc} — R$ {val:.2f} ({cat})"
 
     # ── VENDA_LEITE ───────────────────────────
@@ -1669,8 +2313,9 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str) -> str:
         val      = _parse_float(dados.get("valor"))
         litros   = _parse_float(dados.get("litros"))
         laticinio = dados.get("laticinio") or "Laticínio"
+        data_vl  = dados.get("data") or hoje
         desc     = f"Venda leite {laticinio} — {litros:.0f} L"
-        _fin("Venda de Leite", desc, val, tipo_fin="Geral")
+        _fin("Venda de Leite", desc, val, tipo_fin="receita", data=data_vl)
         preco = val / litros if litros > 0 else 0
         return f"*Salvo!*\n{litros:.0f} L vendidos por R$ {val:.2f} (R$ {preco:.2f}/L)"
 
@@ -1758,7 +2403,7 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str) -> str:
                 _coll(fazenda_id, "animais").document(doc_id).update(upd)
 
         if custo > 0:
-            _fin("Reprodução", f"{evento} — {animal}", custo, animal=animal)
+            _fin("Reprodução", f"{evento} — {animal}", custo, animal=animal, data=str(data))
 
         return f"*Salvo!*\n{evento} registrado para {animal} em {data}."
 
@@ -1837,6 +2482,244 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str) -> str:
             f"Animal(is): {animais_txt}\n"
             f"Total: *{total:.0f} L*"
         )
+
+    # ── CORRIGIR_PRODUCAO ─────────────────────
+    elif tipo == "CORRIGIR_PRODUCAO":
+        animal_raw    = dados.get("animal") or "?"
+        animal, id_a  = _resolver_animal(fazenda_id, animal_raw)
+        data_p        = dados.get("data") or hoje
+        litros_novo   = _parse_float(dados.get("litros_correto") or dados.get("litros"))
+        turno_raw     = dados.get("turno") or 1
+        try:
+            turno = int(turno_raw)
+        except (ValueError, TypeError):
+            turno = {"manha": 1, "manhã": 1, "tarde": 2, "noite": 3}.get(str(turno_raw).lower(), 1)
+
+        # Busca registros existentes para esse animal+data
+        docs_prod = list(_coll(fazenda_id, "producao")
+                         .where(filter=FieldFilter("data", "==", data_p)).stream())
+        antigos = [d for d in docs_prod
+                   if d.to_dict().get("nome_animal") == animal or d.to_dict().get("id_animal") == id_a]
+        if not antigos:
+            return f"Não encontrei registro de {animal} em {data_p} para corrigir."
+        # Apaga o(s) antigo(s) e salva o correto
+        litros_antigo = sum(d.to_dict().get("leite", 0) for d in antigos)
+        for d in antigos:
+            _coll(fazenda_id, "producao").document(d.id).delete()
+        _coll(fazenda_id, "producao").add({
+            "data": data_p, "leite": litros_novo, "turno": turno,
+            "id_animal": id_a, "nome_animal": animal, "racao": 0,
+        })
+        return (f"*Corrigido!*\n{animal} em {data_p}: "
+                f"{litros_antigo:.0f} L → *{litros_novo:.0f} L*")
+
+    # ── APAGAR_PRODUCAO ────────────────────────
+    elif tipo == "APAGAR_PRODUCAO":
+        animal_raw   = dados.get("animal") or "?"
+        animal, id_a = _resolver_animal(fazenda_id, animal_raw)
+        data_p       = dados.get("data") or hoje
+        docs_prod    = list(_coll(fazenda_id, "producao")
+                            .where(filter=FieldFilter("data", "==", data_p)).stream())
+        antigos = [d for d in docs_prod
+                   if d.to_dict().get("nome_animal") == animal or d.to_dict().get("id_animal") == id_a]
+        if not antigos:
+            return f"Não encontrei registro de {animal} em {data_p}."
+        total_apagado = sum(d.to_dict().get("leite", 0) for d in antigos)
+        for d in antigos:
+            _coll(fazenda_id, "producao").document(d.id).delete()
+        return f"*Apagado!*\nProdução de {animal} em {data_p} ({total_apagado:.0f} L) removida."
+
+    # ── CORRIGIR_LANCAMENTO ───────────────────
+    elif tipo == "CORRIGIR_LANCAMENTO":
+        desc_busca = (dados.get("descricao") or "").lower()
+        data_l     = dados.get("data") or hoje
+        val_novo   = _parse_float(dados.get("valor_novo"))
+        # Busca financeiro nessa data
+        docs_fin = list(_coll(fazenda_id, "financeiro")
+                        .where(filter=FieldFilter("data", "==", data_l)).stream())
+        candidatos = [d for d in docs_fin
+                      if desc_busca and desc_busca in (d.to_dict().get("desc", "") or
+                                                        d.to_dict().get("descricao", "")).lower()]
+        if not candidatos:
+            return (f"Não encontrei lançamento com '{dados.get('descricao')}' em {data_l}. "
+                    f"Verifique a data ou a descrição.")
+        if len(candidatos) > 1:
+            lista = "\n".join(f"- {d.to_dict().get('desc','')} R${d.to_dict().get('valor',0):.2f}"
+                              for d in candidatos[:5])
+            return f"Encontrei {len(candidatos)} lançamentos similares:\n{lista}\nSeja mais específico."
+        doc = candidatos[0]
+        val_antigo = doc.to_dict().get("valor", 0)
+        _coll(fazenda_id, "financeiro").document(doc.id).update({"valor": val_novo})
+        return (f"*Corrigido!*\n{doc.to_dict().get('desc','')} em {data_l}: "
+                f"R${val_antigo:.2f} → *R${val_novo:.2f}*")
+
+    # ── APAGAR_LANCAMENTO ─────────────────────
+    elif tipo == "APAGAR_LANCAMENTO":
+        desc_busca = (dados.get("descricao") or "").lower()
+        data_l     = dados.get("data") or hoje
+        val_hint   = _parse_float(dados.get("valor"))
+        docs_fin   = list(_coll(fazenda_id, "financeiro")
+                          .where(filter=FieldFilter("data", "==", data_l)).stream())
+        candidatos = [d for d in docs_fin
+                      if desc_busca and desc_busca in (d.to_dict().get("desc", "") or
+                                                        d.to_dict().get("descricao", "")).lower()]
+        if val_hint > 0:
+            candidatos = [d for d in candidatos
+                          if abs(d.to_dict().get("valor", 0) - val_hint) < 1]
+        if not candidatos:
+            return f"Não encontrei lançamento com '{dados.get('descricao')}' em {data_l}."
+        if len(candidatos) > 1:
+            lista = "\n".join(f"- {d.to_dict().get('desc','')} R${d.to_dict().get('valor',0):.2f}"
+                              for d in candidatos[:5])
+            return f"Encontrei {len(candidatos)} lançamentos:\n{lista}\nQual deles apagar? Informe o valor exato."
+        doc = candidatos[0]
+        d_dict = doc.to_dict()
+        _coll(fazenda_id, "financeiro").document(doc.id).delete()
+        return (f"*Apagado!*\n{d_dict.get('desc','')} — R${d_dict.get('valor',0):.2f} "
+                f"({data_l}) removido do financeiro.")
+
+    # ── AGENDAR_SANITARIO ─────────────────────
+    elif tipo == "AGENDAR_SANITARIO":
+        tipo_san  = dados.get("tipo_sanitario") or "Protocolo"
+        protocolo = dados.get("protocolo") or dados.get("produto") or "Procedimento"
+        animal    = dados.get("animal") or "Rebanho"
+        data_ag   = dados.get("data") or hoje
+        obs       = dados.get("obs") or ""
+        custo_est = _parse_float(dados.get("custo"))
+        _coll(fazenda_id, "sanitario").add({
+            "data": data_ag, "tipo": tipo_san, "prod": protocolo,
+            "protocolo": protocolo, "modo": "Individual" if animal != "Rebanho" else "Rebanho Todo",
+            "animal": animal, "custo": custo_est,
+            "executado": False, "obs": obs or "Agendado via WhatsApp",
+        })
+        ani_txt = f" para {animal}" if animal != "Rebanho" else " para o rebanho"
+        return f"*Agendado!*\n{tipo_san} — {protocolo}{ani_txt} em {data_ag}."
+
+    # ── ALTERAR_CONFIG ────────────────────────
+    elif tipo == "ALTERAR_CONFIG":
+        chave     = dados.get("chave") or ""
+        val_novo  = dados.get("valor_novo") or dados.get("valor")
+        _CHAVES_VALIDAS = {"preco_leite", "custo_por_litro", "meta_producao", "nome_fazenda"}
+        if chave not in _CHAVES_VALIDAS:
+            return f"Configuração '{chave}' não reconhecida. Opções: preço do leite, custo por litro, meta de produção."
+        try:
+            val_num = float(str(val_novo).replace(",", ".").replace("R$", "").strip())
+        except (ValueError, TypeError):
+            val_num = val_novo
+        _coll(fazenda_id, "config").document(chave).set({"chave": chave, "valor": val_num})
+        _cache_del(f"mem:{fazenda_id}")
+        nomes = {"preco_leite": "Preço do leite", "custo_por_litro": "Custo por litro",
+                 "meta_producao": "Meta de produção", "nome_fazenda": "Nome da fazenda"}
+        return f"*Configuração atualizada!*\n{nomes.get(chave, chave)}: {val_num}"
+
+    # ── ATUALIZAR_ANIMAL ──────────────────────
+    elif tipo == "ATUALIZAR_ANIMAL":
+        animal_raw   = dados.get("animal") or dados.get("nome") or "?"
+        animal, id_a = _resolver_animal(fazenda_id, animal_raw)
+        # Campos atualizáveis via chat
+        _CAMPOS_ANI = {"raca", "obs", "lote", "nasc", "mae"}
+        upd = {k: v for k, v in dados.items() if k in _CAMPOS_ANI and v is not None}
+        if not upd:
+            return "Nenhum campo para atualizar informado."
+        ani_docs = list(_coll(fazenda_id, "animais")
+                        .where(filter=FieldFilter("nome", "==", animal)).stream())
+        if not ani_docs:
+            return f"Animal '{animal}' não encontrado no rebanho."
+        _coll(fazenda_id, "animais").document(ani_docs[0].id).update(upd)
+        campos_txt = ", ".join(f"{k}={v}" for k, v in upd.items())
+        return f"*Atualizado!*\n{animal}: {campos_txt}"
+
+    # ── EXECUTAR_PROTOCOLO ────────────────────
+    elif tipo == "EXECUTAR_PROTOCOLO":
+        protocolo_busca = (dados.get("protocolo") or dados.get("produto") or "").lower()
+        animal_busca    = (dados.get("animal") or "").lower()
+        data_exec       = dados.get("data") or hoje
+        custo_real      = _parse_float(dados.get("custo"))
+
+        # Busca protocolo pendente (executado=False)
+        docs_san = list(_coll(fazenda_id, "sanitario").stream())
+        pendentes = [d for d in docs_san if not d.to_dict().get("executado", False)]
+
+        # Filtra por protocolo e/ou animal
+        candidatos = []
+        for d in pendentes:
+            dd = d.to_dict()
+            nome_prot = (dd.get("protocolo") or dd.get("prod") or "").lower()
+            nome_ani  = (dd.get("animal") or "").lower()
+            match_prot = (not protocolo_busca) or (protocolo_busca in nome_prot)
+            match_ani  = (not animal_busca) or (animal_busca in nome_ani) or ("rebanho" in animal_busca)
+            if match_prot and match_ani:
+                candidatos.append(d)
+
+        if not candidatos:
+            return (f"Não encontrei protocolo pendente com '{dados.get('protocolo','')}' "
+                    f"para '{dados.get('animal','o rebanho')}'. Já foi executado antes?")
+        if len(candidatos) > 1:
+            lista = "\n".join(
+                f"- {d.to_dict().get('prod','')} — {d.to_dict().get('animal','')} "
+                f"({d.to_dict().get('data','')})"
+                for d in candidatos[:5]
+            )
+            return f"Encontrei {len(candidatos)} protocolos pendentes:\n{lista}\nQual você executou?"
+
+        doc    = candidatos[0]
+        dd     = doc.to_dict()
+        upd_ex = {"executado": True, "executado_em": data_exec}
+        if custo_real > 0:
+            upd_ex["custo"] = custo_real
+        _coll(fazenda_id, "sanitario").document(doc.id).update(upd_ex)
+
+        # Lança custo real no financeiro se informado
+        custo_lancado = custo_real if custo_real > 0 else _parse_float(dd.get("custo"))
+        if custo_lancado > 0:
+            animal_fin = dd.get("animal") or "Rebanho"
+            _fin("Medicamento / Sanitário",
+                 f"{dd.get('tipo','')} — {dd.get('prod','')} (executado)",
+                 custo_lancado, animal=animal_fin, data=data_exec)
+
+        return (f"*Executado!*\n{dd.get('tipo','')} — {dd.get('prod','')} "
+                f"({dd.get('animal','Rebanho')}) marcado como realizado em {data_exec}."
+                + (f"\nR$ {custo_lancado:.2f} lançado no financeiro." if custo_lancado > 0 else ""))
+
+    # ── APAGAR_ITEM_ESTOQUE ───────────────────
+    elif tipo == "APAGAR_ITEM_ESTOQUE":
+        prod      = dados.get("produto") or ""
+        existente = _buscar_no_estoque(fazenda_id, prod)
+        if not existente:
+            return f"Produto '{prod}' não encontrado no estoque."
+        _coll(fazenda_id, "estoque").document(existente["doc_id"]).delete()
+        _cache_del(f"est:{fazenda_id}")
+        qtd_txt = f"{existente.get('qtd', 0):.1f} {existente.get('un', 'un')}"
+        return f"*Removido!*\n{existente.get('item', prod)} ({qtd_txt}) apagado do armazém."
+
+    # ── AJUSTAR_ESTOQUE ───────────────────────
+    elif tipo == "AJUSTAR_ESTOQUE":
+        prod      = dados.get("produto") or ""
+        qtd_nova  = _parse_float(dados.get("qtd"))
+        operacao  = (dados.get("operacao") or "definir").lower()
+        un        = dados.get("unidade") or "un"
+        existente = _buscar_no_estoque(fazenda_id, prod)
+        if existente:
+            did     = existente["doc_id"]
+            qtd_ant = existente.get("qtd", 0)
+            if operacao in ("adicionar", "somar", "add"):
+                qtd_final = qtd_ant + qtd_nova
+            elif operacao in ("remover", "subtrair", "tirar"):
+                qtd_final = max(qtd_ant - qtd_nova, 0)
+            else:
+                qtd_final = qtd_nova  # definir / setar
+            _coll(fazenda_id, "estoque").document(did).update(
+                {"qtd": qtd_final, "un": un or existente.get("un", "un")}
+            )
+            _cache_del(f"est:{fazenda_id}")
+            return (f"*Estoque ajustado!*\n{prod}: {qtd_ant:.1f} → *{qtd_final:.1f} {un}*")
+        else:
+            # Item novo no estoque
+            _coll(fazenda_id, "estoque").add(
+                {"item": prod, "qtd": qtd_nova, "un": un, "custo_medio": 0}
+            )
+            _cache_del(f"est:{fazenda_id}")
+            return f"*Adicionado ao estoque!*\n{prod}: {qtd_nova:.1f} {un}"
 
     return "Registro salvo!"
 
@@ -2577,6 +3460,31 @@ async def _iniciar_agendador():
 @app.get("/")
 def raiz():
     return {"status": "MilkShow Bot online", "version": "2.1"}
+
+
+class BotTestRequest(BaseModel):
+    tel: str = "5511999990000"
+    mensagem: str
+    fazenda_id: str = "default"
+    reset: bool = False  # limpa conversa antes de enviar
+
+
+@app.post("/bot/testar")
+def bot_testar(body: BotTestRequest, authorization: str = Header(default="")):
+    """Endpoint de teste do bot — simula recebimento de mensagem WhatsApp.
+    Requer token admin. Retorna resposta bruta do bot e dados da conversa.
+    """
+    _verificar_admin(authorization)
+    if body.reset:
+        _clear_conv(body.tel)
+    resposta = _processar(body.tel, body.mensagem, body.fazenda_id)
+    conv = _get_conv(body.tel)
+    return {
+        "resposta":  resposta,
+        "estado":    conv.get("estado"),
+        "tipo":      conv.get("tipo"),
+        "dados":     conv.get("dados", {}),
+    }
 
 
 @app.get("/status")
