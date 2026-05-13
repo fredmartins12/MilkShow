@@ -122,16 +122,20 @@ class ProducaoInput(BaseModel):
 
 class FinanceiroInput(BaseModel):
     data: str
-    descricao: str
-    cat: str
+    descricao: str = ""
+    categoria: str = "Outros"
+    cat: str = ""          # alias legacy
     valor: float
-    tipo: str  # "receita" | "despesa"
+    tipo: str              # "receita" | "despesa"
+    obs: str = ""
 
 class EstoqueInput(BaseModel):
     item: str
     qtd: float
     un: str
     custo_unit: float = 0.0
+    categoria: str = "Outros"
+    min_alerta: Optional[float] = None
 
 
 # ─────────────────────────────────────────────
@@ -236,57 +240,92 @@ def set_pin(body: LoginRequest, user=Depends(_get_user)):
 # ─────────────────────────────────────────────
 @mobile_router.get("/dashboard")
 def dashboard(user=Depends(_get_user)):
-    fid   = user["fazenda_id"]
-    hoje  = datetime.date.today().isoformat()
-    ini_m = datetime.date.today().replace(day=1).isoformat()
-    ini_7 = (datetime.date.today() - datetime.timedelta(days=7)).isoformat()
+    fid    = user["fazenda_id"]
+    hoje   = datetime.date.today()
+    ontem  = hoje - datetime.timedelta(days=1)
+    ini_7  = hoje - datetime.timedelta(days=7)
+    ini_14 = hoje - datetime.timedelta(days=14)
+    ini_m  = hoje.replace(day=1)
+    # Mês anterior
+    primeiro_dia_mes = hoje.replace(day=1)
+    ultimo_dia_mes_ant = primeiro_dia_mes - datetime.timedelta(days=1)
+    ini_mes_ant = ultimo_dia_mes_ant.replace(day=1)
 
-    # Produção hoje
-    prod_hoje = [d.to_dict() for d in
-                 _coll(fid, "producao").where(filter=FieldFilter("data", "==", hoje)).stream()]
-    litros_hoje = sum(p.get("leite", 0) for p in prod_hoje)
+    # Produção: busca 14 dias de uma vez para calcular hoje + ontem + semana atual + semana anterior
+    prod_14d = [d.to_dict() for d in
+                _coll(fid, "producao")
+                .where(filter=FieldFilter("data", ">=", ini_14.isoformat())).stream()]
 
-    # Produção 7 dias
-    prod_7d = [d.to_dict() for d in
-               _coll(fid, "producao").where(filter=FieldFilter("data", ">=", ini_7)).stream()]
-    litros_7d = sum(p.get("leite", 0) for p in prod_7d)
+    litros_hoje      = sum(p.get("leite", 0) for p in prod_14d if p.get("data") == hoje.isoformat())
+    litros_ontem     = sum(p.get("leite", 0) for p in prod_14d if p.get("data") == ontem.isoformat())
+    litros_7d        = sum(p.get("leite", 0) for p in prod_14d if p.get("data", "") >= ini_7.isoformat())
+    litros_semana_ant= sum(p.get("leite", 0) for p in prod_14d
+                           if ini_14.isoformat() <= p.get("data", "") < ini_7.isoformat())
 
-    # Financeiro mês
+    prod_hoje_docs   = [p for p in prod_14d if p.get("data") == hoje.isoformat()]
+    ordenhadas_hoje  = len({p.get("id_animal") for p in prod_hoje_docs})
+
+    # Financeiro mês atual
     fin_mes = [d.to_dict() for d in
-               _coll(fid, "financeiro").where(filter=FieldFilter("data", ">=", ini_m)).stream()]
-    receitas  = sum(f.get("valor", 0) for f in fin_mes if "Venda" in f.get("cat", ""))
-    despesas  = sum(f.get("valor", 0) for f in fin_mes if "Venda" not in f.get("cat", ""))
+               _coll(fid, "financeiro").where(filter=FieldFilter("data", ">=", ini_m.isoformat())).stream()]
+    def _cat(f): return f.get("categoria") or f.get("cat", "")
+    receitas = sum(f.get("valor", 0) for f in fin_mes if f.get("tipo") == "receita" or "Venda" in _cat(f))
+    despesas = sum(f.get("valor", 0) for f in fin_mes if f.get("tipo") == "despesa" and "Venda" not in _cat(f))
 
-    # Animais em lactação
+    # Financeiro mês anterior
+    fin_mes_ant = [d.to_dict() for d in
+                   _coll(fid, "financeiro")
+                   .where(filter=FieldFilter("data", ">=", ini_mes_ant.isoformat()))
+                   .where(filter=FieldFilter("data", "<=", ultimo_dia_mes_ant.isoformat())).stream()]
+    receitas_ant = sum(f.get("valor", 0) for f in fin_mes_ant if f.get("tipo") == "receita" or "Venda" in _cat(f))
+    despesas_ant = sum(f.get("valor", 0) for f in fin_mes_ant if f.get("tipo") == "despesa" and "Venda" not in _cat(f))
+
+    # Animais
     animais = [d.to_dict() for d in _coll(fid, "animais").stream()]
     em_lactacao = [a for a in animais if a.get("status") == "Lactação"]
-    ordenhadas_hoje = len({p.get("id_animal") for p in prod_hoje})
 
-    # Config preço leite
+    # Config
     config = {}
     for d in _coll(fid, "config").stream():
         c = d.to_dict()
         config[c.get("chave", d.id)] = c.get("valor")
-    preco_leite = float(config.get("preco_leite", 2.50))
+    preco_leite     = float(config.get("preco_leite", 2.50))
+    custo_por_litro = float(config.get("custo_por_litro", 1.18))
+    meta_producao   = float(config.get("meta_producao", 0))
+
+    def _delta(atual, anterior):
+        if anterior and anterior > 0:
+            return round(((atual - anterior) / anterior) * 100, 1)
+        return None
 
     return {
         "hoje": {
-            "data":            hoje,
-            "litros":          round(litros_hoje, 1),
-            "receita_est":     round(litros_hoje * preco_leite, 2),
-            "vacas_lact":      len(em_lactacao),
-            "vacas_ordenhadas": ordenhadas_hoje,
+            "data":              hoje.isoformat(),
+            "litros":            round(litros_hoje, 1),
+            "litros_ontem":      round(litros_ontem, 1),
+            "delta_producao":    _delta(litros_hoje, litros_ontem),
+            "receita_est":       round(litros_hoje * preco_leite, 2),
+            "vacas_lact":        len(em_lactacao),
+            "vacas_ordenhadas":  ordenhadas_hoje,
         },
         "semana": {
-            "litros_7d": round(litros_7d, 1),
-            "media_dia":  round(litros_7d / 7, 1),
+            "litros_7d":         round(litros_7d, 1),
+            "litros_semana_ant": round(litros_semana_ant, 1),
+            "delta_semana":      _delta(litros_7d, litros_semana_ant),
+            "media_dia":         round(litros_7d / 7, 1),
         },
         "mes": {
-            "receitas":  round(receitas, 2),
-            "despesas":  round(despesas, 2),
-            "saldo":     round(receitas - despesas, 2),
+            "receitas":          round(receitas, 2),
+            "despesas":          round(despesas, 2),
+            "saldo":             round(receitas - despesas, 2),
+            "receitas_ant":      round(receitas_ant, 2),
+            "despesas_ant":      round(despesas_ant, 2),
+            "delta_receitas":    _delta(receitas, receitas_ant),
+            "delta_saldo":       _delta(receitas - despesas, receitas_ant - despesas_ant),
         },
-        "preco_leite": preco_leite,
+        "preco_leite":     preco_leite,
+        "custo_por_litro": custo_por_litro,
+        "meta_producao":   meta_producao,
     }
 
 
@@ -296,7 +335,11 @@ def dashboard(user=Depends(_get_user)):
 @mobile_router.get("/animais")
 def listar_animais(user=Depends(_get_user)):
     fid = user["fazenda_id"]
-    docs = [d.to_dict() for d in _coll(fid, "animais").stream()]
+    docs = []
+    for doc in _coll(fid, "animais").stream():
+        row = doc.to_dict()
+        row["id"] = doc.id          # sempre inclui o doc ID para DELETE funcionar
+        docs.append(row)
     ativos = [a for a in docs if a.get("status") != "Vendido"]
     return sorted(ativos, key=lambda a: a.get("nome", ""))
 
@@ -311,18 +354,27 @@ def listar_producao(data: Optional[str] = None, dias: int = 7, user=Depends(_get
         ini = data
     else:
         ini = (datetime.date.today() - datetime.timedelta(days=dias)).isoformat()
-    docs = [d.to_dict() for d in
-            _coll(fid, "producao").where(filter=FieldFilter("data", ">=", ini))
-            .order_by("data", direction=firestore.Query.DESCENDING).limit(200).stream()]
+    docs = []
+    for d in (_coll(fid, "producao").where(filter=FieldFilter("data", ">=", ini))
+              .order_by("data", direction=firestore.Query.DESCENDING).limit(200).stream()):
+        row = d.to_dict()
+        row["id"] = d.id
+        docs.append(row)
     return docs
 
 @mobile_router.post("/producao")
 def registrar_producao(body: ProducaoInput, user=Depends(_get_user)):
     fid = user["fazenda_id"]
     doc = body.model_dump()
-    doc["registrado_por"] = user.get("nome", user["tel"])
+    doc["registrado_por"] = user.get("nome") or user.get("email") or user.get("tel", "")
     doc["ts"] = datetime.datetime.now().isoformat()
     _coll(fid, "producao").add(doc)
+    return {"ok": True}
+
+@mobile_router.delete("/producao/{pid}")
+def remover_producao(pid: str, user=Depends(_get_user)):
+    fid = user["fazenda_id"]
+    _coll(fid, "producao").document(pid).delete()
     return {"ok": True}
 
 
@@ -333,18 +385,43 @@ def registrar_producao(body: ProducaoInput, user=Depends(_get_user)):
 def listar_financeiro(dias: int = 30, user=Depends(_get_user)):
     fid = user["fazenda_id"]
     ini = (datetime.date.today() - datetime.timedelta(days=dias)).isoformat()
-    docs = [d.to_dict() for d in
-            _coll(fid, "financeiro").where(filter=FieldFilter("data", ">=", ini))
-            .order_by("data", direction=firestore.Query.DESCENDING).limit(200).stream()]
+    docs = []
+    for d in (_coll(fid, "financeiro").where(filter=FieldFilter("data", ">=", ini))
+              .order_by("data", direction=firestore.Query.DESCENDING).limit(200).stream()):
+        row = d.to_dict()
+        row["id"] = d.id
+        docs.append(row)
     return docs
 
 @mobile_router.post("/financeiro")
 def registrar_financeiro(body: FinanceiroInput, user=Depends(_get_user)):
     fid = user["fazenda_id"]
     doc = body.model_dump()
-    doc["registrado_por"] = user.get("nome", user["tel"])
+    if not doc.get("categoria") and doc.get("cat"):
+        doc["categoria"] = doc["cat"]
+    if not doc.get("cat") and doc.get("categoria"):
+        doc["cat"] = doc["categoria"]
+    doc["registrado_por"] = user.get("nome", user.get("email", ""))
     doc["ts"] = datetime.datetime.now().isoformat()
     _coll(fid, "financeiro").add(doc)
+    return {"ok": True}
+
+@mobile_router.delete("/financeiro/{fid_doc}")
+def remover_financeiro(fid_doc: str, user=Depends(_get_user)):
+    fid = user["fazenda_id"]
+    _coll(fid, "financeiro").document(fid_doc).delete()
+    return {"ok": True}
+
+@mobile_router.patch("/financeiro/{fid_doc}")
+def atualizar_financeiro(fid_doc: str, body: FinanceiroInput, user=Depends(_get_user)):
+    fid = user["fazenda_id"]
+    doc = body.model_dump()
+    if not doc.get("categoria") and doc.get("cat"):
+        doc["categoria"] = doc["cat"]
+    if not doc.get("cat") and doc.get("categoria"):
+        doc["cat"] = doc["categoria"]
+    doc["atualizado_em"] = datetime.datetime.now().isoformat()
+    _coll(fid, "financeiro").document(fid_doc).set(doc, merge=True)
     return {"ok": True}
 
 
@@ -354,4 +431,165 @@ def registrar_financeiro(body: FinanceiroInput, user=Depends(_get_user)):
 @mobile_router.get("/estoque")
 def listar_estoque(user=Depends(_get_user)):
     fid = user["fazenda_id"]
-    return [d.to_dict() for d in _coll(fid, "estoque").stream()]
+    docs = _coll(fid, "estoque").stream()
+    result = []
+    for d in docs:
+        row = d.to_dict()
+        row["id"] = d.id
+        result.append(row)
+    return result
+
+@mobile_router.post("/estoque")
+def registrar_estoque(body: EstoqueInput, user=Depends(_get_user)):
+    fid = user["fazenda_id"]
+    doc = body.model_dump()
+    doc["atualizado_em"] = datetime.datetime.now().isoformat()
+    _, ref = _coll(fid, "estoque").add(doc)
+    return {"id": ref.id, **doc}
+
+@mobile_router.delete("/estoque/{item_id}")
+def remover_estoque(item_id: str, user=Depends(_get_user)):
+    fid = user["fazenda_id"]
+    _coll(fid, "estoque").document(item_id).delete()
+    return {"ok": True}
+
+@mobile_router.patch("/estoque/{item_id}")
+def atualizar_estoque(item_id: str, body: EstoqueInput, user=Depends(_get_user)):
+    fid = user["fazenda_id"]
+    doc = body.model_dump()
+    doc["atualizado_em"] = datetime.datetime.now().isoformat()
+    _coll(fid, "estoque").document(item_id).set(doc)
+    return {"id": item_id, **doc}
+
+
+# ─────────────────────────────────────────────
+# ANIMAIS — POST (adicionar / atualizar)
+# ─────────────────────────────────────────────
+class AnimalInput(BaseModel):
+    nome: str
+    status: str = "Lactação"
+    raca: str = ""
+    sexo: str = "Fêmea"
+    nascimento: str = ""
+    id: Optional[str] = None
+    ins: str = ""          # última inseminação
+    mae: str = ""
+    obs: str = ""
+
+@mobile_router.post("/animais")
+def adicionar_animal(body: AnimalInput, user=Depends(_get_user)):
+    fid = user["fazenda_id"]
+    doc = body.model_dump()
+    doc["ts"] = datetime.datetime.now().isoformat()
+    aid = doc.pop("id", None) or None
+    if aid:
+        _coll(fid, "animais").document(aid).set(doc, merge=True)
+    else:
+        _coll(fid, "animais").add(doc)
+    return {"ok": True}
+
+@mobile_router.delete("/animais/{aid}")
+def remover_animal(aid: str, user=Depends(_get_user)):
+    fid = user["fazenda_id"]
+    _coll(fid, "animais").document(aid).update({"status": "Vendido"})
+    return {"ok": True}
+
+
+# ─────────────────────────────────────────────
+# SANITÁRIO (vacinas, exames, protocolos)
+# ─────────────────────────────────────────────
+class SanitarioInput(BaseModel):
+    tipo: str              # Vacina | Exame | Medicamento | Protocolo
+    animal: str
+    protocolo: str
+    data: str
+    responsavel: str = ""
+    obs: str = ""
+    executado: bool = False
+    dose: str = ""
+    via: str = ""
+
+@mobile_router.get("/sanitario")
+def listar_sanitario(dias: int = 90, user=Depends(_get_user)):
+    fid = user["fazenda_id"]
+    docs = []
+    for d in _coll(fid, "sanitario").stream():
+        row = d.to_dict()
+        row["id"] = d.id
+        docs.append(row)
+    return sorted(docs, key=lambda x: x.get("data", ""), reverse=True)
+
+@mobile_router.post("/sanitario")
+def registrar_sanitario(body: SanitarioInput, user=Depends(_get_user)):
+    fid = user["fazenda_id"]
+    doc = body.model_dump()
+    doc["registrado_por"] = user.get("nome", "")
+    doc["ts"] = datetime.datetime.now().isoformat()
+    _coll(fid, "sanitario").add(doc)
+    return {"ok": True}
+
+@mobile_router.patch("/sanitario/{sid}/executar")
+def executar_sanitario(sid: str, user=Depends(_get_user)):
+    fid = user["fazenda_id"]
+    _coll(fid, "sanitario").document(sid).update({
+        "executado": True,
+        "executado_em": datetime.datetime.now().isoformat(),
+        "executado_por": user.get("nome", ""),
+    })
+    return {"ok": True}
+
+
+# ─────────────────────────────────────────────
+# CONFIG DA FAZENDA
+# ─────────────────────────────────────────────
+@mobile_router.get("/config")
+def get_config(user=Depends(_get_user)):
+    fid = user["fazenda_id"]
+    config = {}
+    for d in _coll(fid, "config").stream():
+        c = d.to_dict()
+        config[c.get("chave", d.id)] = c.get("valor")
+    return config
+
+@mobile_router.post("/config")
+def salvar_config(body: dict, user=Depends(_get_user)):
+    fid = user["fazenda_id"]
+    for chave, valor in body.items():
+        _coll(fid, "config").document(str(chave)).set({"chave": str(chave), "valor": valor})
+    return {"ok": True}
+
+
+# ─────────────────────────────────────────────
+# PRODUÇÃO — por animal (relatório)
+# ─────────────────────────────────────────────
+@mobile_router.get("/producao/animal/{nome}")
+def producao_por_animal(nome: str, dias: int = 30, user=Depends(_get_user)):
+    fid = user["fazenda_id"]
+    ini = (datetime.date.today() - datetime.timedelta(days=dias)).isoformat()
+    # Filtra por data primeiro (índice simples), depois filtra por animal em Python
+    # evita índice composto no Firestore
+    docs = [d.to_dict() for d in
+            _coll(fid, "producao")
+            .where(filter=FieldFilter("data", ">=", ini))
+            .stream()]
+    filtrado = [d for d in docs if d.get("nome_animal") == nome]
+    return sorted(filtrado, key=lambda x: x.get("data", ""))
+
+
+# ─────────────────────────────────────────────
+# FINANCEIRO — resumo por categoria
+# ─────────────────────────────────────────────
+@mobile_router.get("/financeiro/resumo")
+def resumo_financeiro(dias: int = 30, user=Depends(_get_user)):
+    fid = user["fazenda_id"]
+    ini = (datetime.date.today() - datetime.timedelta(days=dias)).isoformat()
+    docs = [d.to_dict() for d in
+            _coll(fid, "financeiro").where(filter=FieldFilter("data", ">=", ini)).stream()]
+    resumo = {}
+    for d in docs:
+        cat = d.get("categoria") or d.get("cat", "Outros")
+        if cat not in resumo:
+            resumo[cat] = {"cat": cat, "categoria": cat, "total": 0, "qtd": 0}
+        resumo[cat]["total"] += d.get("valor", 0)
+        resumo[cat]["qtd"]   += 1
+    return sorted(resumo.values(), key=lambda x: x["total"], reverse=True)

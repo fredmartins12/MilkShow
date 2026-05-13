@@ -24,22 +24,32 @@ jobs:
 
             # Sincroniza arquivos (sem sobrescrever .env e firebase_key.json)
             git fetch origin main
+
+            # Verifica se mobile mudou antes de resetar os arquivos
+            MOBILE_MUDOU=$(git diff HEAD origin/main --name-only 2>/dev/null | grep -c 'mobile/' || true)
+
             git checkout origin/main -- \
               gestor.py utils.py whatsapp_bot.py mobile_api.py \
-              pages/ deploy/
+              mobile/ pages/ deploy/ docs/ 2>/dev/null || \
+            git checkout origin/main -- \
+              gestor.py utils.py whatsapp_bot.py mobile_api.py
 
-            # Rebuild do app mobile se package.json mudou
-            if git diff HEAD@{1} --name-only 2>/dev/null | grep -q 'mobile/'; then
-              echo "Mobile mudou — rebuilding..."
-              cd mobile && npm install && npm run build
+            # Rebuild do app mobile se arquivos mudaram
+            if [ "$MOBILE_MUDOU" -gt 0 ] && [ -d mobile ]; then
+              echo "Mobile mudou ($MOBILE_MUDOU arquivo(s)) — rebuilding..."
+              cd mobile && npm install --legacy-peer-deps && npm run build
               cp -r dist/. ../mobile_app/
               cd ..
+              echo "Build concluído — assets copiados para mobile_app/"
+            else
+              echo "Mobile sem alterações — skip build"
             fi
 
-            # Reinicia o bot
+            # Reinicia MilkShow bot
             systemctl restart milkshow-bot
-            sleep 3
+            sleep 2
             systemctl is-active milkshow-bot || { journalctl -u milkshow-bot -n 20; exit 1; }
+
             echo "Deploy concluído!"
 
       - name: Notify on failure

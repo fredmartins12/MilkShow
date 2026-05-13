@@ -1,0 +1,578 @@
+/**
+ * TabRebanho — Gestão completa do rebanho
+ * - Lista com busca + filtros por status e raça
+ * - Clique no animal → painel lateral com perfil completo:
+ *     ficha, edição completa (todos os campos), produção 30d, histórico sanitário
+ */
+
+import { useEffect, useState, useMemo } from 'react'
+import {
+  Search, X, RefreshCw, Trash2, Pencil, Check, Plus,
+  Milk, CalendarDays, Clock, TrendingUp, ShieldCheck, ChevronRight,
+} from 'lucide-react'
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
+import { api } from '../api.js'
+import {
+  Loading, ErrorMsg, Toast, Modal, SectionHeader,
+  Field, Input, Select, Textarea, Btn,
+  T, fmtDate, dataParto, idadeDias,
+} from '../ui.jsx'
+
+const ANIMAL_VAZIO = { nome: '', raca: 'Holandesa', status: 'Lactação', sexo: 'Fêmea', nascimento: '', mae: '', ins: '', obs: '' }
+
+const STATUS_OPTS = ['Todos', 'Lactação', 'Seca', 'Gestação', 'Novilha', 'Bezerro']
+const RACAS_OPTS  = ['Todas', 'Holandesa', 'Jersey', 'Girolando', 'Gir', 'Nelore Leiteiro', 'Pardo Suíço', 'Outra']
+const STATUS_NEW  = ['Lactação', 'Seca', 'Gestação', 'Novilha', 'Bezerro']
+const SEXOS       = ['Fêmea', 'Macho']
+
+const STATUS_COLOR = {
+  'Lactação': { bg: 'rgba(22,163,74,0.12)',  border: '#16a34a40', dot: '#16a34a' },
+  'Seca':     { bg: 'rgba(234,179,8,0.10)',  border: '#ca8a0440', dot: '#ca8a04' },
+  'Gestação': { bg: 'rgba(59,130,246,0.10)', border: '#3b82f640', dot: '#3b82f6' },
+  'Novilha':  { bg: 'rgba(167,139,250,0.10)',border: '#7c3aed40', dot: '#a78bfa' },
+  'Bezerro':  { bg: 'rgba(251,146,60,0.10)', border: '#ea580c40', dot: '#fb923c' },
+}
+
+function StatusPill({ status }) {
+  const c = STATUS_COLOR[status] || { bg: 'rgba(100,116,139,0.1)', border: '#47556940', dot: '#64748b' }
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium"
+          style={{ background: c.bg, border: `1px solid ${c.border}` }}>
+      <span className="w-1.5 h-1.5 rounded-full" style={{ background: c.dot }} />
+      <span style={{ color: c.dot }}>{status}</span>
+    </span>
+  )
+}
+
+// ─── PAINEL LATERAL DE PERFIL ─────────────────────────────────────────────────
+function AnimalPanel({ animal, onClose, onSaved, onDelete, sanitario }) {
+  const [prod, setProd]         = useState([])
+  const [loadProd, setLoadProd] = useState(true)
+  const isNovo = !animal.id
+  const [editMode, setEditMode] = useState(isNovo)
+  const [saving, setSaving]     = useState(false)
+  const [form, setForm]         = useState({})
+
+  useEffect(() => {
+    setForm({
+      nome:       animal.nome || '',
+      raca:       animal.raca || 'Holandesa',
+      status:     animal.status || 'Lactação',
+      sexo:       animal.sexo || 'Fêmea',
+      nascimento: animal.nascimento || '',
+      mae:        animal.mae || '',
+      ins:        animal.ins || animal.inseminacao || '',
+      obs:        animal.obs || '',
+    })
+    setEditMode(!animal.id)
+  }, [animal])
+
+  useEffect(() => {
+    setLoadProd(true)
+    api.producaoPorAnimal(animal.nome, 30)
+      .then(p => {
+        const porDia = {}
+        p.forEach(r => { porDia[r.data] = (porDia[r.data] || 0) + (r.leite || 0) })
+        setProd(
+          Object.entries(porDia)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([d, l]) => ({ dia: d.slice(5), litros: +l.toFixed(1) }))
+        )
+      })
+      .catch(() => setProd([]))
+      .finally(() => setLoadProd(false))
+  }, [animal.nome])
+
+  function f(k, v) { setForm(p => ({ ...p, [k]: v })) }
+
+  async function salvar() {
+    if (!form.nome.trim()) return
+    setSaving(true)
+    try {
+      await api.adicionarAnimal({ ...form, id: animal.id || undefined })
+      setSaving(false)
+      if (isNovo) { onSaved(true); onClose() }
+      else { setEditMode(false); onSaved(false) }
+    } catch (e) {
+      setSaving(false)
+    }
+  }
+
+  const totalProd  = prod.reduce((s, r) => s + r.litros, 0)
+  const mediaProd  = prod.length ? (totalProd / prod.length).toFixed(1) : '—'
+  const idade      = idadeDias(animal.nascimento)
+  const parto      = dataParto(form.ins || animal.ins || animal.inseminacao)
+  const sanAnimal  = sanitario.filter(s =>
+    (s.animal || '').toLowerCase() === animal.nome.toLowerCase()
+  ).slice(0, 5)
+
+  const tickStyle = { fill: '#475569', fontSize: 10, fontFamily: 'monospace' }
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end"
+         style={{ background: 'rgba(2,6,23,0.6)', backdropFilter: 'blur(4px)' }}
+         onClick={onClose}>
+      <div className="h-full overflow-y-auto flex flex-col"
+           style={{
+             width: 'min(520px, 100vw)',
+             background: '#080e1d',
+             borderLeft: `1px solid ${T.border}`,
+           }}
+           onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="flex items-start justify-between p-5 shrink-0"
+             style={{ borderBottom: `1px solid ${T.border}` }}>
+          <div>
+            <h2 className="text-xl font-bold text-slate-100 leading-tight">
+              {isNovo ? 'Novo Animal' : animal.nome}
+            </h2>
+            {!isNovo && (
+              <div className="flex items-center gap-2 mt-1.5">
+                <StatusPill status={animal.status} />
+                {animal.raca && (
+                  <span className="text-slate-500 text-xs font-mono">{animal.raca}</span>
+                )}
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            {editMode ? (
+              <>
+                <Btn size="xs" variant="ghost" onClick={isNovo ? onClose : () => setEditMode(false)} disabled={saving}>
+                  Cancelar
+                </Btn>
+                <Btn size="xs" variant="primary" onClick={salvar} disabled={saving}>
+                  <Check size={12} />{saving ? 'Salvando...' : isNovo ? 'Adicionar' : 'Salvar'}
+                </Btn>
+              </>
+            ) : (
+              <>
+                <button onClick={() => setEditMode(true)}
+                  className="p-1.5 rounded text-slate-500 hover:text-slate-300 transition-colors"
+                  aria-label="Editar">
+                  <Pencil size={15} />
+                </button>
+                <button onClick={() => onDelete(animal)}
+                  className="p-1.5 rounded text-slate-500 hover:text-red-400 transition-colors"
+                  aria-label="Remover">
+                  <Trash2 size={15} />
+                </button>
+                <button onClick={onClose}
+                  className="p-1.5 rounded text-slate-500 hover:text-slate-300 transition-colors ml-1"
+                  aria-label="Fechar">
+                  <X size={18} />
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="flex-1 p-5 space-y-6">
+
+          {/* Ficha — modo edição */}
+          {editMode ? (
+            <section>
+              <p className="text-[11px] font-mono uppercase tracking-widest text-slate-500 mb-4">{isNovo ? 'Ficha do Animal' : 'Editar Ficha'}</p>
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="Nome *">
+                    <Input value={form.nome} onChange={e => f('nome', e.target.value)} autoFocus />
+                  </Field>
+                  <Field label="Sexo">
+                    <Select value={form.sexo} onChange={e => f('sexo', e.target.value)}>
+                      {SEXOS.map(s => <option key={s}>{s}</option>)}
+                    </Select>
+                  </Field>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="Raça">
+                    <Select value={form.raca} onChange={e => f('raca', e.target.value)}>
+                      {RACAS_OPTS.filter(r => r !== 'Todas').map(r => <option key={r}>{r}</option>)}
+                    </Select>
+                  </Field>
+                  <Field label="Status">
+                    <Select value={form.status} onChange={e => f('status', e.target.value)}>
+                      {STATUS_NEW.map(s => <option key={s}>{s}</option>)}
+                    </Select>
+                  </Field>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="Data de Nascimento">
+                    <Input type="date" value={form.nascimento} onChange={e => f('nascimento', e.target.value)} />
+                  </Field>
+                  <Field label="Mãe">
+                    <Input value={form.mae} onChange={e => f('mae', e.target.value)} placeholder="Nome da mãe" />
+                  </Field>
+                </div>
+                <Field label="Última Inseminação">
+                  <Input type="date" value={form.ins} onChange={e => f('ins', e.target.value)} />
+                </Field>
+                <Field label="Observações">
+                  <Textarea value={form.obs} onChange={e => f('obs', e.target.value)} rows={3}
+                    placeholder="Histórico, particularidades..." />
+                </Field>
+              </div>
+            </section>
+          ) : (
+            /* Ficha — modo visualização */
+            <section>
+              <p className="text-[11px] font-mono uppercase tracking-widest text-slate-500 mb-3">Ficha</p>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { label: 'Sexo',          value: animal.sexo || '—',                                                        Icon: null },
+                  { label: 'Data de Nasc.', value: animal.nascimento ? fmtDate(animal.nascimento) : '—',                      Icon: CalendarDays },
+                  { label: 'Idade',         value: idade != null ? `${idade} dias` : '—',                                     Icon: Clock },
+                  { label: 'Mãe',           value: animal.mae || '—',                                                         Icon: null },
+                  { label: 'DIL',           value: animal.dil != null ? `${animal.dil} dias` : '—',                          Icon: TrendingUp },
+                  { label: 'Inseminação',   value: (animal.ins || animal.inseminacao) ? fmtDate(animal.ins || animal.inseminacao) : '—', Icon: CalendarDays },
+                  { label: 'Parto Est.',    value: parto,                                                                      Icon: CalendarDays },
+                  { label: 'Produção Hoje', value: animal.prod > 0 ? `${Number(animal.prod).toFixed(1)} L` : '—',             Icon: Milk },
+                ].map(({ label, value, Icon }) => (
+                  <div key={label} className="rounded-lg p-3"
+                       style={{ background: T.surface, border: `1px solid ${T.border}` }}>
+                    <div className="flex items-center gap-1.5 mb-1">
+                      {Icon && <Icon size={11} className="text-slate-600" />}
+                      <span className="text-[10px] font-mono uppercase tracking-widest text-slate-600">{label}</span>
+                    </div>
+                    <span className="text-sm font-mono text-slate-200 font-medium">{value}</span>
+                  </div>
+                ))}
+              </div>
+              {animal.obs && (
+                <div className="mt-3 rounded-lg p-3 text-xs font-mono text-slate-400"
+                     style={{ background: T.surface, border: `1px solid ${T.border}` }}>
+                  <span className="text-slate-600 uppercase tracking-wider text-[10px]">Obs: </span>
+                  {animal.obs}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* Produção 30 dias */}
+          {!editMode && (
+            <section>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-[11px] font-mono uppercase tracking-widest text-slate-500">Produção — 30 dias</p>
+                {!loadProd && prod.length > 0 && (
+                  <div className="flex items-center gap-3 text-[11px] font-mono">
+                    <span className="text-slate-600">Total: <span className="text-slate-300">{totalProd.toFixed(0)} L</span></span>
+                    <span className="text-slate-600">Média: <span className="text-emerald-400">{mediaProd} L/dia</span></span>
+                  </div>
+                )}
+              </div>
+              {loadProd ? (
+                <div className="h-[100px] flex items-center justify-center">
+                  <span className="text-slate-700 text-xs font-mono animate-pulse">carregando...</span>
+                </div>
+              ) : prod.length === 0 ? (
+                <div className="h-[100px] flex items-center justify-center rounded-lg"
+                     style={{ background: T.surface, border: `1px solid ${T.border}` }}>
+                  <span className="text-slate-700 text-xs font-mono">sem registros de produção</span>
+                </div>
+              ) : (
+                <div className="rounded-lg overflow-hidden"
+                     style={{ background: T.surface, border: `1px solid ${T.border}` }}>
+                  <ResponsiveContainer width="100%" height={110}>
+                    <AreaChart data={prod} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
+                      <defs>
+                        <linearGradient id="gAnimal" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%"   stopColor="#16a34a" stopOpacity={0.2} />
+                          <stop offset="100%" stopColor="#16a34a" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 5" stroke="#1a2640" />
+                      <XAxis dataKey="dia" tick={tickStyle} />
+                      <YAxis tick={tickStyle} unit="L" />
+                      <Tooltip
+                        content={({ active, payload }) => {
+                          if (!active || !payload?.length) return null
+                          return (
+                            <div style={{ background: '#0f172a', border: `1px solid ${T.border}` }}
+                                 className="rounded px-2.5 py-1.5 text-[11px] font-mono">
+                              <span className="text-emerald-400 font-semibold tabular-nums">{payload[0]?.value?.toFixed(1)} L</span>
+                            </div>
+                          )
+                        }}
+                      />
+                      <Area type="monotone" dataKey="litros" stroke="#16a34a" strokeWidth={1.5}
+                            fill="url(#gAnimal)" dot={false} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* Sanitário */}
+          {!editMode && (
+            <section>
+              <p className="text-[11px] font-mono uppercase tracking-widest text-slate-500 mb-3">Histórico Sanitário</p>
+              {sanAnimal.length === 0 ? (
+                <div className="rounded-lg p-4 text-center"
+                     style={{ background: T.surface, border: `1px solid ${T.border}` }}>
+                  <span className="text-slate-700 text-xs font-mono">nenhum protocolo registrado</span>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {sanAnimal.map((s, i) => (
+                    <div key={i} className="flex items-start gap-3 rounded-lg p-3"
+                         style={{ background: T.surface, border: `1px solid ${T.border}` }}>
+                      <ShieldCheck size={14} className={s.executado ? 'text-emerald-500 mt-0.5' : 'text-slate-600 mt-0.5'} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium text-slate-200 truncate">{s.protocolo || s.tipo}</span>
+                          <span className="text-[10px] font-mono text-slate-600 shrink-0">{fmtDate(s.data)}</span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[10px] font-mono text-slate-600">{s.tipo}</span>
+                          {s.executado
+                            ? <span className="text-[10px] font-mono text-emerald-500">executado</span>
+                            : <span className="text-[10px] font-mono text-amber-500">pendente</span>
+                          }
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── TAB PRINCIPAL ────────────────────────────────────────────────────────────
+export default function TabRebanho() {
+  const [animais, setAnimais]       = useState([])
+  const [sanitario, setSanitario]   = useState([])
+  const [loading, setLoading]       = useState(true)
+  const [erro, setErro]             = useState('')
+  const [toast, setToast]           = useState(null)
+  const [busca, setBusca]           = useState('')
+  const [filtroStatus, setStatus]   = useState('Todos')
+  const [filtroRaca, setRaca]       = useState('Todas')
+  const [selecionado, setSel]       = useState(null)
+  const [confirmDel, setConfirmDel] = useState(null)
+
+  async function carregar() {
+    setLoading(true); setErro('')
+    try {
+      const [a, s] = await Promise.all([api.animais(), api.sanitario(180)])
+      setAnimais(a)
+      setSanitario(s)
+    } catch (e) { setErro(e.message) }
+    finally { setLoading(false) }
+  }
+
+  useEffect(() => { carregar() }, [])
+
+  async function remover(animal) {
+    try {
+      await api.removerAnimal(animal.id)
+      setToast({ msg: `${animal.nome} removido`, tipo: 'ok' })
+      setSel(null)
+      carregar()
+    } catch (e) { setToast({ msg: e.message, tipo: 'erro' }) }
+    finally { setConfirmDel(null) }
+  }
+
+  function handleSaved(isNovo = false) {
+    setToast({ msg: isNovo ? 'Animal adicionado ao rebanho' : 'Animal atualizado', tipo: 'ok' })
+    carregar()
+  }
+
+  const filtrados = useMemo(() => {
+    return animais.filter(a => {
+      const nome = (a.nome || '').toLowerCase()
+      const ok1 = !busca || nome.includes(busca.toLowerCase())
+      const ok2 = filtroStatus === 'Todos' || a.status === filtroStatus
+      const ok3 = filtroRaca   === 'Todas' || a.raca === filtroRaca
+      return ok1 && ok2 && ok3
+    })
+  }, [animais, busca, filtroStatus, filtroRaca])
+
+  const contagem = useMemo(() => {
+    const c = {}
+    animais.forEach(a => { c[a.status] = (c[a.status] || 0) + 1 })
+    return c
+  }, [animais])
+
+  if (loading) return <Loading />
+
+  const racasPresentes = ['Todas', ...new Set(animais.map(a => a.raca).filter(Boolean))]
+
+  return (
+    <div className="flex flex-col flex-1 overflow-hidden">
+      {erro && <ErrorMsg msg={erro} onRetry={carregar} />}
+
+      {/* Barra de busca + atualizar */}
+      <div className="flex items-center gap-3 px-5 py-3.5 shrink-0"
+           style={{ borderBottom: `1px solid ${T.border}` }}>
+        <div className="relative flex-1">
+          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" />
+          <input
+            value={busca}
+            onChange={e => setBusca(e.target.value)}
+            placeholder="Buscar por nome..."
+            className="w-full pl-10 pr-8 py-2.5 text-sm rounded-lg bg-transparent text-slate-300 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-emerald-600/40"
+            style={{ border: `1px solid ${T.border}` }}
+          />
+          {busca && (
+            <button onClick={() => setBusca('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-400 transition-colors">
+              <X size={13} />
+            </button>
+          )}
+        </div>
+        <select value={filtroRaca} onChange={e => setRaca(e.target.value)}
+          className="text-xs font-mono rounded-lg px-3 py-2.5 text-slate-400 focus:outline-none shrink-0"
+          style={{ background: T.surface, border: `1px solid ${T.border}` }}>
+          {racasPresentes.map(r => <option key={r}>{r}</option>)}
+        </select>
+        <button onClick={carregar} aria-label="Atualizar"
+          className="p-2.5 rounded-lg text-slate-500 hover:text-slate-300 transition-colors shrink-0"
+          style={{ border: `1px solid ${T.border}` }}>
+          <RefreshCw size={13} />
+        </button>
+        <Btn variant="primary" size="sm" onClick={() => setSel(ANIMAL_VAZIO)}>
+          <Plus size={13} />
+          <span className="hidden sm:inline">Novo Animal</span>
+        </Btn>
+      </div>
+
+      {/* Filtros de status — pills */}
+      <div className="flex items-center gap-2 px-5 py-3 shrink-0 overflow-x-auto"
+           style={{ borderBottom: `1px solid ${T.border}` }}>
+        {toast && <Toast msg={toast.msg} tipo={toast.tipo} onClose={() => setToast(null)} />}
+
+        <button onClick={() => setStatus('Todos')}
+          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all shrink-0"
+          style={{
+            background: filtroStatus === 'Todos' ? '#1e293b' : 'transparent',
+            border: `1px solid ${filtroStatus === 'Todos' ? '#334155' : 'transparent'}`,
+            color: filtroStatus === 'Todos' ? '#cbd5e1' : '#64748b',
+          }}>
+          Todos
+          <span className="font-mono tabular-nums">{animais.length}</span>
+        </button>
+
+        {['Lactação', 'Seca', 'Gestação', 'Novilha', 'Bezerro'].map(s => {
+          const c   = STATUS_COLOR[s]
+          const n   = contagem[s] || 0
+          const ativo = filtroStatus === s
+          return (
+            <button key={s} onClick={() => setStatus(ativo ? 'Todos' : s)}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all shrink-0"
+              style={{
+                background: ativo ? c.bg : 'transparent',
+                border: `1px solid ${ativo ? c.border : 'transparent'}`,
+                color: ativo ? c.dot : '#64748b',
+              }}>
+              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: c.dot }} />
+              {s}
+              <span className="font-mono tabular-nums" style={{ color: ativo ? c.dot : '#475569' }}>{n}</span>
+            </button>
+          )
+        })}
+
+        {(busca || filtroStatus !== 'Todos' || filtroRaca !== 'Todas') && (
+          <button onClick={() => { setBusca(''); setStatus('Todos'); setRaca('Todas') }}
+            className="text-xs font-mono text-slate-600 hover:text-slate-400 whitespace-nowrap ml-auto shrink-0 transition-colors">
+            limpar filtros
+          </button>
+        )}
+      </div>
+
+      {/* Contagem */}
+      <div className="px-5 py-2 shrink-0" style={{ borderBottom: `1px solid ${T.border}` }}>
+        <span className="text-[11px] font-mono text-slate-600">
+          {filtrados.length === animais.length
+            ? `${animais.length} animais`
+            : `${filtrados.length} de ${animais.length} animais`}
+        </span>
+      </div>
+
+      {/* Lista de animais */}
+      <div className="overflow-auto flex-1">
+        {filtrados.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 gap-2">
+            <Search size={24} className="text-slate-800" />
+            <p className="text-slate-600 text-xs font-mono">nenhum animal encontrado</p>
+          </div>
+        ) : (
+          <table className="w-full text-xs font-mono min-w-[500px]">
+            <thead>
+              <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                {['Nome', 'Raça', 'Status', 'Nasc.', 'DIL', 'Prod. Hoje', 'Parto Est.', ''].map(h =>
+                  <th key={h}
+                    className="text-left text-slate-600 px-4 py-3 font-medium tracking-wider text-[11px] uppercase whitespace-nowrap first:pl-5">
+                    {h}
+                  </th>
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              {filtrados.map(a => (
+                <tr key={a.id || a.nome}
+                  className="cursor-pointer transition-colors hover:bg-white/[0.025] group"
+                  style={{ borderBottom: `1px solid ${T.border2}` }}
+                  onClick={() => setSel(a)}>
+                  <td className="px-5 py-3 font-semibold text-slate-200">{a.nome}</td>
+                  <td className="px-4 py-3 text-slate-500">{a.raca || '—'}</td>
+                  <td className="px-4 py-3">
+                    <StatusPill status={a.status} />
+                  </td>
+                  <td className="px-4 py-3 text-slate-500 tabular-nums">
+                    {a.nascimento ? fmtDate(a.nascimento) : '—'}
+                  </td>
+                  <td className="px-4 py-3 text-slate-500 tabular-nums">
+                    {a.dil != null ? `${a.dil}d` : '—'}
+                  </td>
+                  <td className="px-4 py-3 text-slate-200 tabular-nums">
+                    {a.prod > 0 ? `${Number(a.prod).toFixed(1)} L` : '—'}
+                  </td>
+                  <td className="px-4 py-3 text-slate-500 tabular-nums">
+                    {dataParto(a.ins || a.inseminacao)}
+                  </td>
+                  <td className="px-4 py-3 text-right pr-5">
+                    <ChevronRight size={14}
+                      className="text-slate-700 group-hover:text-slate-400 transition-colors inline-block" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Painel lateral de perfil */}
+      {selecionado && (
+        <AnimalPanel
+          animal={selecionado}
+          onClose={() => setSel(null)}
+          onSaved={handleSaved}
+          onDelete={a => { setSel(null); setConfirmDel(a) }}
+          sanitario={sanitario}
+        />
+      )}
+
+      {/* Confirmação de remoção */}
+      <Modal open={!!confirmDel} onClose={() => setConfirmDel(null)} title="Remover animal">
+        <p className="text-slate-400 text-sm">
+          Tem certeza que deseja remover <strong className="text-slate-200">{confirmDel?.nome}</strong>?
+          Esta ação não pode ser desfeita.
+        </p>
+        <div className="flex justify-end gap-2 pt-2">
+          <Btn variant="ghost" onClick={() => setConfirmDel(null)}>Cancelar</Btn>
+          <Btn variant="danger" onClick={() => remover(confirmDel)}>
+            <Trash2 size={12} /> Remover
+          </Btn>
+        </div>
+      </Modal>
+    </div>
+  )
+}
