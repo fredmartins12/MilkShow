@@ -46,7 +46,7 @@ JWT_SECRET = os.environ.get("BOT_ADMIN_TOKEN", "MkSh@dm1n#2024!")
 def gen_token():
     """Gera JWT para acesso à API mobile (financeiro, animais, etc.)."""
     header  = base64.urlsafe_b64encode(b'{"alg":"HS256","typ":"JWT"}').rstrip(b'=').decode()
-    exp     = (datetime.datetime.now(datetime.UTC) + datetime.timedelta(hours=2)).timestamp()
+    exp     = time.time() + 7200  # 2h — usa time.time() para evitar problema de timezone
     payload = json.dumps({"uid": "test", "fazenda_id": FAZENDA, "nome": "Teste",
                           "permissoes": ["admin"], "exp": exp})
     body    = base64.urlsafe_b64encode(payload.encode()).rstrip(b'=').decode()

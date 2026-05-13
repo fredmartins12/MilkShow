@@ -14,6 +14,7 @@ import hmac
 import hashlib
 import json
 import datetime
+import time
 import base64
 from typing import Optional
 
@@ -51,7 +52,7 @@ def _jwt_decode(token: str) -> Optional[dict]:
             return None
         padding = 4 - len(body) % 4
         payload = json.loads(base64.urlsafe_b64decode(body + "=" * padding))
-        if payload.get("exp", 0) < datetime.datetime.utcnow().timestamp():
+        if payload.get("exp", 0) < time.time():
             return None
         return payload
     except Exception:

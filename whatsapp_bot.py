@@ -1735,21 +1735,32 @@ def _pre_classificar_keywords(texto: str) -> tuple[str, str] | None:
     Evita classificações erradas para casos muito comuns e ambíguos.
     Retorna (dominio, tipo) ou None para deixar a IA decidir.
     """
+    import re as _re
     lower = texto.lower()
 
+    # ── Serviço externo (vet pago por fora) — ANTES dos meds para evitar conflito com "vacinar"
+    if any(k in lower for k in ['paguei veterinário','paguei o veterinário','paguei vet ',
+                                  'paguei o vet','visita do vet','honorários do vet',
+                                  'consulta veterinária','taxa de visita','visita técnica',
+                                  'paguei técnico','paguei o técnico','paguei inseminador',
+                                  'veterinário pra vacinar','vet pra vacinar',
+                                  'paguei para vacinar','paguei pra vacinar']):
+        return ("financeiro", "GASTO_GERAL")
+
     # ── Veterinário/sanitário — palavras de medicação/procedimento
+    # 'vacin' como prefixo cobre: vacin (typo), vacina, vacinar, vacinei, vacinação
     _meds = ['ivermectina','ivermctina','ivermectin','ocitocina','ocitosina','oxitocina',
              'penicilina','penicilna','antibiotico','antibiótico','vermifugo','vermífugo',
-             'vacina','vacinei','vacinação','aftosa','brucelose','brucel','mastite',
-             'cortvet','cortisona','dexametasona','vitamina','mineral','antiparasit',
-             'casquei','casquiei','casqueamento','casqueei','casco','casquear','casquei',
+             'vacin','aftosa','brucelose','brucel','mastite',
+             'cortvet','cortisona','dexametasona','vitamina','antiparasit',
+             'casquei','casquiei','casqueamento','casqueei','casco','casquear',
              'botei remo','dei remo','remo no','remo nas','remo pras',
              'botei ocitocina','botei ocitosina','botei penicilina','botei ivermectina',
              'usei dose','usei doses','apliquei dose','apliquei doses',
              'dei remédio','dei rémédio','dei remedio']
     if any(k in lower for k in _meds):
         # Se for agendamento futuro
-        if any(k in lower for k in ['agenda','agendar','próxima','próximo','semana que vem','dia ',
+        if any(k in lower for k in ['agenda','agendar','próxima','próximo','semana que vem',
                                       'para sexta','para quinta','para segunda','para terça','para quarta']):
             return ("armazem", "AGENDAR_SANITARIO")
         # Se for execução de protocolo já agendado
@@ -1772,19 +1783,41 @@ def _pre_classificar_keywords(texto: str) -> tuple[str, str] | None:
                                   'executei o tratamento','realizei o tratamento']):
         return ("armazem", "EXECUTAR_PROTOCOLO")
 
-    # ── Serviço externo (vet, técnico) — sempre GASTO_GERAL (antes de checar vacina/med)
-    if any(k in lower for k in ['paguei veterinário','paguei o veterinário','paguei vet ',
-                                  'paguei o vet','visita do vet','honorários do vet',
-                                  'consulta veterinária','taxa de visita','visita técnica',
-                                  'paguei técnico','paguei o técnico','paguei inseminador']):
-        return ("financeiro", "GASTO_GERAL")
-
     # ── Peão/vaqueiro/diarista — sempre GASTO_GERAL
     if any(k in lower for k in ['paguei o peão','paguei peão','paguei o vaqueiro',
                                   'paguei diarista','paguei o diarista','paguei funcionário',
                                   'salário do peão','salário do vaqueiro','conto pro peão',
                                   'conto pra diarista','paguei pro peão','paguei pra diarista']):
         return ("financeiro", "GASTO_GERAL")
+
+    # ── Reprodução — secagem
+    if any(k in lower for k in ['pra secar','para secar','vou secar','botei secar',
+                                  'mandei secar','vai secar','botei pra secar','botar pra secar']):
+        return ("rebanho", "REPRODUCAO")
+
+    # ── Venda de animal (nome próprio + valor) — NÃO é venda de leite
+    if _re.search(r'vend[ie][i]?\s+(a\s+|o\s+|um\s+|uma\s+)?\w', lower):
+        if not any(k in lower for k in ['leite','litros','lati','cooper']):
+            return ("financeiro", "VENDA_ANIMAL")
+
+    # ── Produção de leite — gírias e padrões diretos
+    _prod_kw = ['capinei','capinagem','ordenhei','tirei leite','tirei o leite',
+                'ordenha de hoje','ordenha de manhã','ordenha de tarde',
+                'litros essa manhã','litros essa tarde','litros de manhã','litros de tarde',
+                'litros hoje','litros no total']
+    if any(k in lower for k in _prod_kw):
+        # Padrão lista animais dentro do mesmo texto → PRODUCAO_MULTIPLA
+        if _re.search(r'[A-Za-zÀ-ú]{3,}\s+\d+\s*[,;]\s*[A-Za-zÀ-ú]{3,}\s+\d+', texto):
+            return ("producao", "PRODUCAO_MULTIPLA")
+        return ("producao", "PRODUCAO_LEITE")
+
+    # ── Padrão "deu N [litros/de manhã]" — produção individual com nome de animal
+    if _re.search(r'\bdeu\s+\d+[\.,]?\d*\s*(litros?|de\s+manh|de\s+tard|l\b)', lower):
+        return ("producao", "PRODUCAO_LEITE")
+
+    # ── Padrão lista de animais: "Nome N, Nome N" → PRODUCAO_MULTIPLA
+    if _re.search(r'[A-Za-zÀ-ú]{3,}\s+\d+\s*[,;]\s*[A-Za-zÀ-ú]{3,}\s+\d+', texto):
+        return ("producao", "PRODUCAO_MULTIPLA")
 
     return None
 
