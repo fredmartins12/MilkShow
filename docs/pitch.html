@@ -1,0 +1,1548 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MilkShow — Pitch Deck 2026</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #030b14;
+  --surface:  #0c1829;
+  --surface2: #112035;
+  --border:   rgba(255,255,255,0.06);
+  --border2:  rgba(255,255,255,0.10);
+  --green:    #16a34a;
+  --green-l:  #4ade80;
+  --cyan:     #22d3ee;
+  --amber:    #f59e0b;
+  --red:      #ef4444;
+  --text:     #f0f6ff;
+  --text2:    #8fa3be;
+  --text3:    #4d6480;
+  --radius:   16px;
+  --slide-dur: 500ms;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── GRAIN OVERLAY ───────────────────────────────────── */
+body::before {
+  content: '';
+  position: fixed; inset: 0; z-index: 1;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  background-size: 200px;
+  opacity: 0.5;
+}
+
+/* ─── SLIDES ──────────────────────────────────────────── */
+#deck {
+  position: fixed; inset: 0; z-index: 2;
+  overflow: hidden;
+}
+
+.slide {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  padding: clamp(40px, 6vh, 80px) clamp(40px, 8vw, 120px);
+  opacity: 0;
+  transform: translateX(60px);
+  transition:
+    opacity var(--slide-dur) cubic-bezier(0.4, 0, 0.2, 1),
+    transform var(--slide-dur) cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+.slide.active {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: all;
+}
+.slide.exit-left {
+  opacity: 0;
+  transform: translateX(-60px);
+}
+
+/* ─── PROGRESS BAR ────────────────────────────────────── */
+#progress {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  height: 2px;
+  background: var(--border);
+}
+#progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--green), var(--cyan));
+  transition: width 400ms cubic-bezier(0.4,0,0.2,1);
+}
+
+/* ─── NAV DOTS ────────────────────────────────────────── */
+#dots {
+  position: fixed; bottom: 28px; left: 50%; z-index: 100;
+  transform: translateX(-50%);
+  display: flex; gap: 8px; align-items: center;
+}
+.dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--text3);
+  transition: all 300ms ease;
+  cursor: pointer;
+}
+.dot.active {
+  background: var(--green-l);
+  width: 24px; border-radius: 3px;
+}
+
+/* ─── SLIDE COUNTER ───────────────────────────────────── */
+#counter {
+  position: fixed; bottom: 28px; right: 40px; z-index: 100;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; color: var(--text3);
+  letter-spacing: 1px;
+}
+
+/* ─── NAV ARROWS ──────────────────────────────────────── */
+#nav-prev, #nav-next {
+  position: fixed; top: 50%; z-index: 100;
+  transform: translateY(-50%);
+  width: 44px; height: 44px;
+  border: 1px solid var(--border2);
+  border-radius: 50%;
+  background: rgba(12,24,41,0.8);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text2);
+  transition: all 200ms;
+  font-size: 18px;
+}
+#nav-prev { left: 20px; }
+#nav-next { right: 20px; }
+#nav-prev:hover, #nav-next:hover {
+  border-color: var(--green);
+  color: var(--green-l);
+  background: rgba(22,163,74,0.1);
+}
+
+/* ─── TYPOGRAPHY ──────────────────────────────────────── */
+.slide-label {
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--green-l);
+  margin-bottom: 16px;
+  opacity: 0.85;
+}
+.slide-title {
+  font-size: clamp(28px, 4vw, 52px);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+.slide-sub {
+  font-size: clamp(14px, 1.6vw, 18px);
+  color: var(--text2);
+  line-height: 1.6;
+  font-weight: 400;
+  max-width: 700px;
+}
+.accent { color: var(--green-l); }
+.accent-cyan { color: var(--cyan); }
+.accent-amber { color: var(--amber); }
+
+/* ─── CARDS ───────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  position: relative;
+  overflow: hidden;
+}
+.card::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(74,222,128,0.3), transparent);
+}
+
+/* ─── STAT NUMBER ─────────────────────────────────────── */
+.stat-num {
+  font-size: clamp(32px, 4vw, 56px);
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  background: linear-gradient(135deg, var(--green-l), var(--cyan));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-variant-numeric: tabular-nums;
+}
+.stat-label {
+  font-size: 12px;
+  color: var(--text2);
+  margin-top: 6px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.stat-detail {
+  font-size: 11px;
+  color: var(--text3);
+  margin-top: 4px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ─── BADGE ───────────────────────────────────────────── */
+.badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 12px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.5px;
+}
+.badge-green { background: rgba(74,222,128,0.1); color: var(--green-l); border: 1px solid rgba(74,222,128,0.2); }
+.badge-cyan  { background: rgba(34,211,238,0.1); color: var(--cyan);    border: 1px solid rgba(34,211,238,0.2); }
+.badge-amber { background: rgba(245,158,11,0.1); color: var(--amber);   border: 1px solid rgba(245,158,11,0.2); }
+.badge-red   { background: rgba(239,68,68,0.1);  color: #f87171;        border: 1px solid rgba(239,68,68,0.2); }
+
+/* ─── FEATURE ITEM ────────────────────────────────────── */
+.feature-item {
+  display: flex; gap: 14px; align-items: flex-start;
+  padding: 14px 0;
+}
+.feature-icon {
+  width: 40px; height: 40px; border-radius: 10px; shrink: 0;
+  background: rgba(74,222,128,0.1);
+  border: 1px solid rgba(74,222,128,0.2);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; flex-shrink: 0;
+}
+.feature-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 3px; }
+.feature-desc  { font-size: 12px; color: var(--text2); line-height: 1.5; }
+
+/* ─── TABLE ───────────────────────────────────────────── */
+.comp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.comp-table th {
+  text-align: center; padding: 10px 16px;
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1px; color: var(--text2);
+  border-bottom: 1px solid var(--border);
+}
+.comp-table th.hl { color: var(--green-l); }
+.comp-table td {
+  text-align: center; padding: 10px 16px;
+  border-bottom: 1px solid var(--border2);
+  color: var(--text2);
+}
+.comp-table td:first-child { text-align: left; font-weight: 500; color: var(--text); }
+.comp-table tr.hl-row td { background: rgba(74,222,128,0.05); }
+.comp-table tr.hl-row td:first-child { color: var(--green-l); font-weight: 700; }
+.check { color: var(--green-l); font-size: 16px; }
+.cross { color: var(--red);    font-size: 14px; opacity: 0.6; }
+.partial { color: var(--amber); font-size: 14px; }
+
+/* ─── PRICING ─────────────────────────────────────────── */
+.price-card {
+  border-radius: 14px;
+  padding: 24px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  display: flex; flex-direction: column; gap: 12px;
+  position: relative;
+}
+.price-card.featured {
+  border-color: rgba(74,222,128,0.35);
+  background: linear-gradient(135deg, rgba(22,163,74,0.08), rgba(34,211,238,0.04));
+}
+.price-card.featured::before {
+  content: 'MAIS POPULAR';
+  position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
+  background: linear-gradient(90deg, var(--green), var(--cyan));
+  color: #fff; font-size: 10px; font-weight: 800; letter-spacing: 1.5px;
+  padding: 3px 14px; border-radius: 20px;
+}
+.price-val {
+  font-size: 36px; font-weight: 900; letter-spacing: -0.03em;
+  color: var(--text);
+}
+.price-val span { font-size: 14px; color: var(--text2); font-weight: 400; }
+.price-feature { font-size: 12px; color: var(--text2); display: flex; align-items: center; gap: 8px; }
+.price-feature::before { content: '✓'; color: var(--green-l); font-weight: 700; }
+
+/* ─── FUND USE ────────────────────────────────────────── */
+.fund-bar {
+  height: 12px; border-radius: 6px;
+  background: var(--surface2);
+  overflow: hidden; margin-top: 6px;
+}
+.fund-fill {
+  height: 100%; border-radius: 6px;
+  transition: width 1s cubic-bezier(0.4,0,0.2,1) 0.5s;
+}
+
+/* ─── GRID HELPERS ────────────────────────────────────── */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.grid-cols-55 { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: start; }
+.grid-cols-64 { display: grid; grid-template-columns: 1.5fr 1fr; gap: 40px; align-items: start; }
+
+/* ─── COVER SPECIFIC ──────────────────────────────────── */
+#slide-1 {
+  justify-content: center;
+  background: radial-gradient(ellipse 80% 60% at 60% 50%, rgba(22,163,74,0.08) 0%, transparent 70%),
+              radial-gradient(ellipse 50% 40% at 80% 20%, rgba(34,211,238,0.05) 0%, transparent 60%),
+              var(--bg);
+}
+#slide-1 .cover-logo {
+  font-size: clamp(52px, 8vw, 96px);
+  font-weight: 900;
+  letter-spacing: -0.04em;
+  background: linear-gradient(135deg, #fff 30%, var(--green-l) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: 1;
+  margin-bottom: 16px;
+}
+#slide-1 .cover-tag {
+  font-size: clamp(16px, 2vw, 22px);
+  color: var(--text2);
+  font-weight: 300;
+  max-width: 600px;
+  line-height: 1.5;
+  margin-bottom: 32px;
+}
+#slide-1 .cover-pills {
+  display: flex; gap: 10px; flex-wrap: wrap;
+}
+
+/* ─── ORBIT GRAPHIC (cover) ───────────────────────────── */
+.orbit-wrap {
+  position: absolute; right: 8vw; top: 50%; transform: translateY(-50%);
+  width: min(340px, 30vw); height: min(340px, 30vw);
+}
+.orbit-ring {
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(74,222,128,0.12);
+  animation: spin linear infinite;
+}
+.orbit-ring:nth-child(1) { animation-duration: 20s; }
+.orbit-ring:nth-child(2) { inset: 20px; border-color: rgba(34,211,238,0.08); animation-duration: 30s; animation-direction: reverse; }
+.orbit-ring:nth-child(3) { inset: 50px; border-color: rgba(74,222,128,0.06); animation-duration: 45s; }
+.orbit-center {
+  position: absolute; inset: 30%; border-radius: 50%;
+  background: radial-gradient(circle, rgba(22,163,74,0.2), rgba(22,163,74,0.05));
+  display: flex; align-items: center; justify-content: center;
+  font-size: clamp(28px, 4vw, 48px); font-weight: 900; color: var(--green-l);
+}
+.orbit-node {
+  position: absolute; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--green-l);
+  box-shadow: 0 0 12px var(--green-l);
+}
+
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes countUp { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(74,222,128,0.3); }
+  50% { box-shadow: 0 0 0 8px rgba(74,222,128,0); }
+}
+
+.slide.active .animate-up {
+  animation: fadeUp 0.6s cubic-bezier(0.4,0,0.2,1) forwards;
+}
+.slide.active .animate-up:nth-child(1) { animation-delay: 0.1s; opacity: 0; }
+.slide.active .animate-up:nth-child(2) { animation-delay: 0.2s; opacity: 0; }
+.slide.active .animate-up:nth-child(3) { animation-delay: 0.3s; opacity: 0; }
+.slide.active .animate-up:nth-child(4) { animation-delay: 0.4s; opacity: 0; }
+.slide.active .animate-up:nth-child(5) { animation-delay: 0.5s; opacity: 0; }
+
+/* ─── DIVIDER ─────────────────────────────────────────── */
+.divider { height: 1px; background: var(--border); margin: 20px 0; }
+
+/* ─── SCROLL FIX FOR LONG SLIDES ─────────────────────── */
+.slide-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; gap: 20px; }
+.slide-body    { flex: 1; display: flex; flex-direction: column; gap: 16px; }
+
+/* ─── CHART CONTAINERS ────────────────────────────────── */
+.chart-wrap { position: relative; }
+
+/* ─── PAIN ICON ───────────────────────────────────────── */
+.pain-item {
+  display: flex; gap: 16px; align-items: flex-start;
+  padding: 16px; border-radius: 12px;
+  background: var(--surface); border: 1px solid var(--border);
+  transition: border-color 300ms;
+}
+.pain-item:hover { border-color: rgba(239,68,68,0.3); }
+.pain-num {
+  font-size: 28px; font-weight: 900; letter-spacing: -0.02em;
+  color: #f87171; line-height: 1; min-width: 70px;
+  font-variant-numeric: tabular-nums;
+}
+.pain-text { font-size: 13px; color: var(--text2); line-height: 1.5; }
+.pain-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+
+/* ─── FLOW STEPS ──────────────────────────────────────── */
+.flow-step {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  flex: 1;
+  text-align: center;
+}
+.flow-bubble {
+  width: 64px; height: 64px; border-radius: 50%;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 26px;
+  transition: border-color 300ms, box-shadow 300ms;
+}
+.flow-bubble:hover {
+  border-color: rgba(74,222,128,0.4);
+  box-shadow: 0 0 24px rgba(74,222,128,0.15);
+}
+.flow-label { font-size: 12px; font-weight: 600; color: var(--text); }
+.flow-desc  { font-size: 11px; color: var(--text2); line-height: 1.4; }
+.flow-arrow { color: var(--text3); font-size: 20px; margin-top: 20px; }
+
+/* ─── TEAM ────────────────────────────────────────────── */
+.team-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px;
+  text-align: center;
+}
+.team-avatar {
+  width: 64px; height: 64px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--green), var(--cyan));
+  margin: 0 auto 12px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; font-weight: 800; color: #fff;
+}
+.team-name { font-size: 15px; font-weight: 700; color: var(--text); }
+.team-role { font-size: 12px; color: var(--green-l); font-weight: 500; margin: 4px 0; }
+.team-bio  { font-size: 11px; color: var(--text2); line-height: 1.5; }
+
+/* ─── GLOW LINES DECORATION ──────────────────────────── */
+.glow-line {
+  position: absolute; pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--green), transparent);
+  height: 1px; opacity: 0.3;
+}
+
+/* ─── WATERMARK ───────────────────────────────────────── */
+#watermark {
+  position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+  z-index: 100;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; letter-spacing: 3px; text-transform: uppercase;
+  color: var(--text3);
+}
+
+/* scrollable slide content */
+.scrollable {
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollable::-webkit-scrollbar { display: none; }
+
+@media (max-width: 768px) {
+  .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+  .grid-cols-55, .grid-cols-64 { grid-template-columns: 1fr; }
+  .orbit-wrap { display: none; }
+  #slide-1 .cover-tag { max-width: 100%; }
+}
+</style>
+</head>
+<body>
+
+<div id="progress"><div id="progress-fill"></div></div>
+<div id="watermark">Confidencial · MilkShow 2026</div>
+
+<button id="nav-prev" onclick="go(-1)" aria-label="Anterior">‹</button>
+<button id="nav-next" onclick="go(+1)" aria-label="Próximo">›</button>
+
+<div id="dots"></div>
+<div id="counter"></div>
+
+<div id="deck">
+
+<!-- ═══════════════════════════════════════════════════════ SLIDE 1 — COVER -->
+<section class="slide active" id="slide-1">
+  <div class="orbit-wrap">
+    <div class="orbit-ring"></div>
+    <div class="orbit-ring"></div>
+    <div class="orbit-ring"></div>
+    <div class="orbit-center">🥛</div>
+    <div class="orbit-node" style="top:10%;left:50%;transform:translate(-50%,-50%)"></div>
+    <div class="orbit-node" style="bottom:10%;right:20%;background:var(--cyan);box-shadow:0 0 12px var(--cyan)"></div>
+    <div class="orbit-node" style="top:50%;left:8%;transform:translateY(-50%);background:var(--amber);box-shadow:0 0 12px var(--amber)"></div>
+  </div>
+
+  <div style="max-width:600px; margin-top:auto; margin-bottom:auto;">
+    <div class="slide-label animate-up" style="margin-bottom:24px;">Agtech · SaaS · WhatsApp-First</div>
+    <div class="cover-logo animate-up">MilkShow</div>
+    <div class="cover-tag animate-up">
+      O sistema nervoso central da fazenda leiteira brasileira.<br>
+      Gestão completa via <span style="color:var(--green-l);font-weight:600">WhatsApp + IA</span>, sem app para instalar.
+    </div>
+    <div class="cover-pills animate-up">
+      <span class="badge badge-green">Seed Round 2026</span>
+      <span class="badge badge-cyan">R$ 1.5M</span>
+      <span class="badge badge-amber">Embrapa · 1M fazendas · R$91.8B TAM</span>
+    </div>
+    <div class="animate-up" style="margin-top:48px; font-size:12px; color:var(--text3); font-family:'JetBrains Mono',monospace;">
+      Use ← → para navegar · Pressione F para tela cheia
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ SLIDE 2 — PROBLEMA -->
+<section class="slide" id="slide-2">
+  <div class="slide-label animate-up">01 · Problema</div>
+  <div class="slide-title animate-up">O Produtor Perde Dinheiro<br>Todo Dia — e Não Sabe</div>
+  <div class="slide-sub animate-up" style="margin-bottom:24px;">
+    Brasil tem <strong style="color:var(--text)">+1 milhão de fazendas leiteiras</strong>. A maioria ainda gerencia com papel, planilha ou memória.
+  </div>
+  <div class="scrollable" style="flex:1">
+    <div class="grid-2 animate-up" style="gap:12px;">
+      <div class="pain-item">
+        <div>
+          <div class="pain-num">78%</div>
+          <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;">Embrapa 2025</div>
+        </div>
+        <div>
+          <div class="pain-title">Gestão no papel ou planilha</div>
+          <div class="pain-text">Quase 4 em cada 5 produtores não usam nenhum software de gestão. Dados perdem-se, decisões atrasam.</div>
+        </div>
+      </div>
+      <div class="pain-item">
+        <div>
+          <div class="pain-num">18%</div>
+          <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;">perda de produção</div>
+        </div>
+        <div>
+          <div class="pain-title">Queda não detectada a tempo</div>
+          <div class="pain-text">Vacas com curva de lactação em declínio acelerado passam despercebidas por semanas antes de secar.</div>
+        </div>
+      </div>
+      <div class="pain-item">
+        <div>
+          <div class="pain-num">1/3</div>
+          <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;">dos protocolos</div>
+        </div>
+        <div>
+          <div class="pain-title">Sanidade em atraso</div>
+          <div class="pain-text">1 em cada 3 protocolos sanitários (vacinas, vermífugos) é executado fora do prazo por falta de controle.</div>
+        </div>
+      </div>
+      <div class="pain-item">
+        <div>
+          <div class="pain-num" style="font-size:22px;">R$12K</div>
+          <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;">perda / ano / 50 vacas</div>
+        </div>
+        <div>
+          <div class="pain-title">Custo invisível da ineficiência</div>
+          <div class="pain-text">Ração comprada sem histórico de preço, financeiro sem categorização, estoque no "olho". Soma silenciosa.</div>
+        </div>
+      </div>
+    </div>
+    <div class="card animate-up" style="margin-top:12px; padding:16px 24px;">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <span style="font-size:13px;color:var(--text2);">Aplicativos existentes exigem</span>
+        <span class="badge badge-red">app instalado</span>
+        <span class="badge badge-red">onboarding longo</span>
+        <span class="badge badge-red">desktop/laptop</span>
+        <span class="badge badge-red">treinamento</span>
+        <span style="font-size:13px;color:var(--text2);">— o produtor abandona em 2 semanas.</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ SLIDE 3 — SOLUÇÃO -->
+<section class="slide" id="slide-3">
+  <div class="slide-label animate-up">02 · Solução</div>
+  <div class="slide-title animate-up">WhatsApp + IA = Gestão<br><span class="accent">Zero Fricção</span></div>
+  <div class="slide-sub animate-up" style="margin-bottom:24px;">
+    O produtor já usa WhatsApp 4h/dia. Nós levamos a gestão até onde ele já está.
+  </div>
+  <div class="scrollable" style="flex:1">
+    <div class="grid-cols-64 animate-up" style="gap:24px;">
+      <div>
+        <!-- HOW IT WORKS flow -->
+        <div style="display:flex; align-items:flex-start; gap:0; margin-bottom:16px;">
+          <div class="flow-step">
+            <div class="flow-bubble">💬</div>
+            <div class="flow-label">Produtor Digita</div>
+            <div class="flow-desc">"Mimosa 32L manhã"</div>
+          </div>
+          <div class="flow-arrow" style="margin-top:20px;padding:0 8px;">→</div>
+          <div class="flow-step">
+            <div class="flow-bubble" style="background:rgba(74,222,128,0.08);border-color:rgba(74,222,128,0.3)">🧠</div>
+            <div class="flow-label">IA Interpreta</div>
+            <div class="flow-desc">NLP + Groq/Gemini identifica tipo, animal, quantidade</div>
+          </div>
+          <div class="flow-arrow" style="margin-top:20px;padding:0 8px;">→</div>
+          <div class="flow-step">
+            <div class="flow-bubble">🗄️</div>
+            <div class="flow-label">Salva em Nuvem</div>
+            <div class="flow-desc">Firebase multi-tenant por fazenda</div>
+          </div>
+          <div class="flow-arrow" style="margin-top:20px;padding:0 8px;">→</div>
+          <div class="flow-step">
+            <div class="flow-bubble" style="background:rgba(34,211,238,0.08);border-color:rgba(34,211,238,0.3)">📊</div>
+            <div class="flow-label">Painel Web</div>
+            <div class="flow-desc">Dashboard em tempo real, gráficos, alertas</div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div class="feature-item" style="padding:10px 0;">
+            <div class="feature-icon">🥛</div>
+            <div><div class="feature-title">Registro de Produção</div><div class="feature-desc">Voz, texto ou foto — a IA entende. Curva de lactação (modelo Wood) detecta queda ≥35%.</div></div>
+          </div>
+          <div class="feature-item" style="padding:10px 0;">
+            <div class="feature-icon" style="background:rgba(34,211,238,0.1);border-color:rgba(34,211,238,0.2)">💰</div>
+            <div><div class="feature-title">Financeiro Automatizado</div><div class="feature-desc">Classificação automática de despesas. Alerta de variação de preço da ração ≥8%.</div></div>
+          </div>
+          <div class="feature-item" style="padding:10px 0;">
+            <div class="feature-icon" style="background:rgba(245,158,11,0.1);border-color:rgba(245,158,11,0.2)">🏆</div>
+            <div><div class="feature-title">Ranking de Rentabilidade</div><div class="feature-desc">Qual vaca dá mais lucro? Custo/L calculado automaticamente. Relatório mensal automático.</div></div>
+          </div>
+          <div class="feature-item" style="padding:10px 0;">
+            <div class="feature-icon" style="background:rgba(167,139,250,0.1);border-color:rgba(167,139,250,0.2)">👥</div>
+            <div><div class="feature-title">Multi-Usuário por Fazenda</div><div class="feature-desc">Peão, veterinário e dono no mesmo rebanho. Permissões por perfil. Convites por código.</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PHONE MOCKUP -->
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <div class="card" style="padding:16px; font-family:'JetBrains Mono',monospace; font-size:12px; line-height:1.8;">
+          <div style="color:var(--text3);font-size:10px;margin-bottom:12px;letter-spacing:1px;">CHAT WHATSAPP · HOJE 06:12</div>
+          <div style="margin-bottom:8px;">
+            <div style="background:var(--surface2);padding:8px 12px;border-radius:12px 12px 12px 2px;color:var(--text2);max-width:90%;font-size:11px;">Mimosa 28L Estrela 31L Flor 24L</div>
+          </div>
+          <div style="text-align:right;margin-bottom:8px;">
+            <div style="background:rgba(22,163,74,0.15);padding:8px 12px;border-radius:12px 12px 2px 12px;color:var(--green-l);display:inline-block;text-align:left;max-width:90%;font-size:11px;">✅ <strong>3 registros salvos!</strong><br>Mimosa: 28L | Estrela: 31L | Flor: 24L<br>Total manhã: <strong>83L</strong><br>📊 Média 7d Mimosa: 29.2L</div>
+          </div>
+          <div style="margin-bottom:8px;">
+            <div style="background:var(--surface2);padding:8px 12px;border-radius:12px 12px 12px 2px;color:var(--text2);max-width:90%;font-size:11px;">comprei 10 sacos ração R$85 cada</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="background:rgba(22,163,74,0.15);padding:8px 12px;border-radius:12px 12px 2px 12px;color:var(--green-l);display:inline-block;text-align:left;max-width:90%;font-size:11px;">💰 Compra registrada: R$850<br>📈 Preço ração: R$2.83/kg<br>⚠️ Alta de 12% vs lote anterior!</div>
+          </div>
+        </div>
+        <div class="card" style="padding:12px 16px;">
+          <div style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:8px;">ALERTA AUTOMÁTICO · 2ª FEIRA 06:00</div>
+          <div style="font-size:12px;color:var(--amber);display:flex;gap:8px;">
+            <span>⚠</span>
+            <span>Vaca <strong style="color:var(--text)">Bonita</strong> sem produção há 4 dias — candidata a vaca seca</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ SLIDE 4 — MERCADO -->
+<section class="slide" id="slide-4">
+  <div class="slide-label animate-up">03 · Mercado</div>
+  <div class="slide-title animate-up">Um Mercado de <span class="accent">R$ 91,8 Bilhões</span><br>Subdigitalizado</div>
+  <div class="slide-sub animate-up" style="margin-bottom:20px;">
+    Anuário Leite 2025 (Embrapa) · IBGE 2024 · Valor da produção pecuária leiteira
+  </div>
+  <div class="scrollable" style="flex:1">
+    <div class="grid-cols-55 animate-up">
+      <div>
+        <!-- TAM/SAM/SOM visual -->
+        <div style="position:relative; display:flex; flex-direction:column; gap:12px;">
+          <!-- TAM -->
+          <div class="card" style="padding:20px 24px; border-left:3px solid rgba(74,222,128,0.5);">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+              <div>
+                <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;letter-spacing:1px;margin-bottom:4px;">TAM · TOTAL ADDRESSABLE MARKET</div>
+                <div style="font-size:28px;font-weight:900;color:var(--green-l);letter-spacing:-0.02em;">R$ 91,8B</div>
+                <div style="font-size:12px;color:var(--text2);margin-top:4px;">Mercado total de laticínios no Brasil</div>
+              </div>
+              <div style="font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--text3);text-align:right;">+1M<br>fazendas</div>
+            </div>
+          </div>
+          <!-- SAM -->
+          <div class="card" style="padding:20px 24px; border-left:3px solid rgba(34,211,238,0.5); margin-left:24px;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+              <div>
+                <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;letter-spacing:1px;margin-bottom:4px;">SAM · SERVICEABLE ADDRESSABLE MARKET</div>
+                <div style="font-size:28px;font-weight:900;color:var(--cyan);letter-spacing:-0.02em;">R$ 2,4B</div>
+                <div style="font-size:12px;color:var(--text2);margin-top:4px;">1M fazendas × R$200/mês SaaS</div>
+              </div>
+              <div style="font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--text3);text-align:right;">SmallHolder<br>digitalizável</div>
+            </div>
+          </div>
+          <!-- SOM -->
+          <div class="card" style="padding:20px 24px; border-left:3px solid rgba(245,158,11,0.5); margin-left:48px;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+              <div>
+                <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;letter-spacing:1px;margin-bottom:4px;">SOM · TARGET 36 MESES</div>
+                <div style="font-size:28px;font-weight:900;color:var(--amber);letter-spacing:-0.02em;">R$ 47M</div>
+                <div style="font-size:12px;color:var(--text2);margin-top:4px;">20K fazendas · 2% do SAM</div>
+              </div>
+              <div style="font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--text3);text-align:right;">meta<br>Y3</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <div class="card animate-up" style="padding:20px;">
+          <div style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:14px;letter-spacing:1px;">BRASIL · SETOR LEITEIRO 2024</div>
+          <div class="chart-wrap" style="height:180px;">
+            <canvas id="mktChart"></canvas>
+          </div>
+        </div>
+        <div class="grid-2" style="gap:8px;">
+          <div class="card" style="padding:14px;text-align:center;">
+            <div style="font-size:22px;font-weight:900;color:var(--green-l);">35,7B</div>
+            <div style="font-size:10px;color:var(--text2);margin-top:2px;">litros produzidos 2024</div>
+            <div style="font-size:10px;color:var(--green-l);margin-top:2px;">↑ recorde histórico</div>
+          </div>
+          <div class="card" style="padding:14px;text-align:center;">
+            <div style="font-size:22px;font-weight:900;color:var(--cyan);">955K</div>
+            <div style="font-size:10px;color:var(--text2);margin-top:2px;">propriedades familiares</div>
+            <div style="font-size:10px;color:var(--cyan);margin-top:2px;">90%+ sem software</div>
+          </div>
+          <div class="card" style="padding:14px;text-align:center;">
+            <div style="font-size:22px;font-weight:900;color:var(--amber);">R$1B</div>
+            <div style="font-size:10px;color:var(--text2);margin-top:2px;">investido em agtechs 2024</div>
+            <div style="font-size:10px;color:var(--amber);margin-top:2px;">39 deals · Liga Ventures</div>
+          </div>
+          <div class="card" style="padding:14px;text-align:center;">
+            <div style="font-size:22px;font-weight:900;color:var(--text);">2.075</div>
+            <div style="font-size:10px;color:var(--text2);margin-top:2px;">agtechs no Brasil 2025</div>
+            <div style="font-size:10px;color:var(--text3);margin-top:2px;">Radar Agtech 2025</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ SLIDE 5 — POR QUE WHATSAPP -->
+<section class="slide" id="slide-5">
+  <div class="slide-label animate-up">04 · Vantagem Competitiva</div>
+  <div class="slide-title animate-up">Por que <span class="accent">WhatsApp</span>?<br>Zero Fricção é o Produto</div>
+  <div class="slide-sub animate-up" style="margin-bottom:24px;">
+    A maior barreira de adoção em agtech não é preço — é complexidade.
+  </div>
+  <div class="scrollable" style="flex:1">
+    <div class="grid-cols-55 animate-up">
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <div class="card" style="padding:24px;">
+          <div style="font-size:48px;font-weight:900;letter-spacing:-0.03em;background:linear-gradient(135deg,#fff,var(--green-l));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">170M</div>
+          <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px;">usuários no Brasil</div>
+          <div style="font-size:12px;color:var(--text2);">#1 país do mundo em penetração de WhatsApp</div>
+        </div>
+        <div class="card" style="padding:20px;">
+          <div style="font-size:36px;font-weight:900;color:var(--cyan);">96%</div>
+          <div style="font-size:13px;font-weight:600;color:var(--text);">dos produtores rurais usam smartphone</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:4px;">IBGE 2024 — e WhatsApp é o app nº1</div>
+        </div>
+        <div class="card" style="padding:20px;">
+          <div style="font-size:36px;font-weight:900;color:var(--amber);">0</div>
+          <div style="font-size:13px;font-weight:600;color:var(--text);">instalações, onboardings, senhas</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:4px;">O produtor já sabe usar. Conversa como se fosse um ajudante.</div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px;">Comparação de Adoção</div>
+        <div class="chart-wrap" style="height:220px;">
+          <canvas id="adoptChart"></canvas>
+        </div>
+        <div class="card" style="padding:16px;">
+          <div style="font-size:12px;color:var(--text2);line-height:1.7;">
+            <strong style="color:var(--green-l);">Tradicional:</strong> download → cadastro → tutorial → abandono em 12 dias<br>
+            <strong style="color:var(--green-l);">MilkShow:</strong> "Oi" → responde em 2s → registra em 10s → usa para sempre
+          </div>
+        </div>
+        <div class="card" style="padding:16px;">
+          <div style="font-size:11px;color:var(--text3);margin-bottom:8px;font-family:'JetBrains Mono',monospace;">MOAT TÉCNICO</div>
+          <div style="display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--text2);">
+            <div style="display:flex;gap:8px;"><span class="accent">✓</span> Cascata IA: Groq → Gemini → Claude (failover)</div>
+            <div style="display:flex;gap:8px;"><span class="accent">✓</span> Cascata WhatsApp: Evolution → Z-API → Twilio</div>
+            <div style="display:flex;gap:8px;"><span class="accent">✓</span> Firebase multi-tenant por fazenda</div>
+            <div style="display:flex;gap:8px;"><span class="accent">✓</span> Painel PWA offline-first</div>
+            <div style="display:flex;gap:8px;"><span class="accent">✓</span> SSE para sync em tempo real</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ SLIDE 6 — CONCORRÊNCIA -->
+<section class="slide" id="slide-6">
+  <div class="slide-label animate-up">05 · Mercado Competitivo</div>
+  <div class="slide-title animate-up">Concorrentes Existem.<br>Nenhum <span class="accent">Onde o Produtor Está</span></div>
+  <div class="slide-sub animate-up" style="margin-bottom:20px;">
+    Todos exigem app, treinamento e desktop. Nenhum usa WhatsApp como interface primária.
+  </div>
+  <div class="animate-up" style="flex:1;overflow:hidden;">
+    <table class="comp-table">
+      <thead>
+        <tr>
+          <th style="text-align:left;">Solução</th>
+          <th class="hl">MilkShow</th>
+          <th>BovControl</th>
+          <th>Leigado</th>
+          <th>Agriness</th>
+          <th>Planilha/Papel</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="hl-row">
+          <td>Interface WhatsApp</td>
+          <td><span class="check">✓</span></td>
+          <td><span class="cross">✗</span></td>
+          <td><span class="cross">✗</span></td>
+          <td><span class="cross">✗</span></td>
+          <td><span class="cross">✗</span></td>
+        </tr>
+        <tr>
+          <td>Sem app para instalar</td>
+          <td><span class="check">✓</span></td>
+          <td><span class="cross">✗</span></td>
+          <td><span class="cross">✗</span></td>
+          <td><span class="cross">✗</span></td>
+          <td><span class="check">✓</span></td>
+        </tr>
+        <tr class="hl-row">
+          <td>IA para interpretação de texto</td>
+          <td><span class="check">✓</span></td>
+          <td><span class="partial">~</span></td>
+          <td><span class="cross">✗</span></td>
+          <td><span class="cross">✗</span></td>
+          <td><span class="cross">✗</span></td>
+        </tr>
+        <tr>
+          <td>Curva de lactação (Wood)</td>
+          <td><span class="check">✓</span></td>
+          <td><span class="partial">~</span></td>
+          <td><span class="cross">✗</span></td>
+          <td><span class="cross">✗</span></td>
+          <td><span class="cross">✗</span></td>
+        </tr>
+        <tr class="hl-row">
+          <td>Multi-usuário por fazenda</td>
+          <td><span class="check">✓</span></td>
+          <td><span class="check">✓</span></td>
+          <td><span class="partial">~</span></td>
+          <td><span class="check">✓</span></td>
+          <td><span class="cross">✗</span></td>
+        </tr>
+        <tr>
+          <td>Alertas proativos automáticos</td>
+          <td><span class="check">✓</span></td>
+          <td><span class="partial">~</span></td>
+          <td><span class="cross">✗</span></td>
+          <td><span class="check">✓</span></td>
+          <td><span class="cross">✗</span></td>
+        </tr>
+        <tr class="hl-row">
+          <td>Financeiro + Estoque integrado</td>
+          <td><span class="check">✓</span></td>
+          <td><span class="partial">~</span></td>
+          <td><span class="check">✓</span></td>
+          <td><span class="cross">✗</span></td>
+          <td><span class="cross">✗</span></td>
+        </tr>
+        <tr>
+          <td>Ticket médio mensal</td>
+          <td style="color:var(--green-l);font-weight:700;">R$ 97–397</td>
+          <td>R$ 200–500+</td>
+          <td>R$ 99–299</td>
+          <td>R$ 500+</td>
+          <td>R$ 0</td>
+        </tr>
+        <tr class="hl-row">
+          <td>Receita (2024)</td>
+          <td style="color:var(--green-l);font-weight:700;">Piloto</td>
+          <td>$6.2M</td>
+          <td>$1.4M</td>
+          <td>N/D</td>
+          <td>—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ SLIDE 7 — MODELO -->
+<section class="slide" id="slide-7">
+  <div class="slide-label animate-up">06 · Modelo de Negócio</div>
+  <div class="slide-title animate-up">SaaS Simples.<br><span class="accent">Receita Previsível</span></div>
+  <div class="slide-sub animate-up" style="margin-bottom:20px;">
+    Assinatura mensal por fazenda. Sem taxa de setup. Cancela quando quiser.
+  </div>
+  <div class="scrollable" style="flex:1">
+    <div class="grid-3 animate-up" style="gap:16px;margin-bottom:16px;">
+      <div class="price-card">
+        <div>
+          <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:1px;margin-bottom:8px;">BÁSICO</div>
+          <div class="price-val">R$97<span>/mês</span></div>
+          <div style="font-size:11px;color:var(--text3);margin-top:4px;">≤ 30 vacas</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
+          <div class="price-feature">Bot WhatsApp completo</div>
+          <div class="price-feature">Painel web (1 usuário)</div>
+          <div class="price-feature">Alertas básicos</div>
+          <div class="price-feature">Produção + Financeiro</div>
+        </div>
+      </div>
+      <div class="price-card featured">
+        <div>
+          <div style="font-size:12px;font-weight:700;color:var(--green-l);letter-spacing:1px;margin-bottom:8px;">PROFISSIONAL</div>
+          <div class="price-val">R$197<span>/mês</span></div>
+          <div style="font-size:11px;color:var(--text3);margin-top:4px;">≤ 150 vacas</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
+          <div class="price-feature">Tudo do Básico</div>
+          <div class="price-feature">Multi-usuário (até 5)</div>
+          <div class="price-feature">Curva de lactação Wood</div>
+          <div class="price-feature">Ranking rentabilidade</div>
+          <div class="price-feature">Relatório mensal auto</div>
+        </div>
+      </div>
+      <div class="price-card">
+        <div>
+          <div style="font-size:12px;font-weight:700;color:var(--cyan);letter-spacing:1px;margin-bottom:8px;">PREMIUM</div>
+          <div class="price-val">R$397<span>/mês</span></div>
+          <div style="font-size:11px;color:var(--text3);margin-top:4px;">Ilimitado</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
+          <div class="price-feature">Tudo do Profissional</div>
+          <div class="price-feature">Usuários ilimitados</div>
+          <div class="price-feature">Integração laticínio</div>
+          <div class="price-feature">API + Webhooks</div>
+          <div class="price-feature">Suporte prioritário</div>
+        </div>
+      </div>
+    </div>
+    <div class="grid-3 animate-up" style="gap:12px;">
+      <div class="card" style="padding:16px;text-align:center;">
+        <div style="font-size:20px;font-weight:800;color:var(--green-l);">92%</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:4px;">margem bruta estimada</div>
+        <div style="font-size:10px;color:var(--text3);">SaaS + IA (Groq ~$0.01/msg)</div>
+      </div>
+      <div class="card" style="padding:16px;text-align:center;">
+        <div style="font-size:20px;font-weight:800;color:var(--cyan);"><3 meses</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:4px;">payback CAC estimado</div>
+        <div style="font-size:10px;color:var(--text3);">canal WhatsApp viral (fazenda convida peão)</div>
+      </div>
+      <div class="card" style="padding:16px;text-align:center;">
+        <div style="font-size:20px;font-weight:800;color:var(--amber);">$197</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:4px;">ARPU médio estimado</div>
+        <div style="font-size:10px;color:var(--text3);">mix ponderado de planos</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ SLIDE 8 — TRAÇÃO -->
+<section class="slide" id="slide-8">
+  <div class="slide-label animate-up">07 · Tração</div>
+  <div class="slide-title animate-up">Do Zero ao <span class="accent">Produto Funcional</span><br>em 90 Dias</div>
+  <div class="slide-sub animate-up" style="margin-bottom:24px;">
+    Infraestrutura em produção. Piloto ativo. Sistema processa registros reais.
+  </div>
+  <div class="scrollable" style="flex:1">
+    <div class="grid-4 animate-up" style="margin-bottom:16px;">
+      <div class="card" style="padding:20px;text-align:center;">
+        <div class="stat-num counter" data-target="47">0</div>
+        <div class="stat-label">Funcionalidades</div>
+        <div class="stat-detail">no bot + painel</div>
+      </div>
+      <div class="card" style="padding:20px;text-align:center;">
+        <div class="stat-num counter" data-target="99.8" data-suffix="%">0</div>
+        <div class="stat-label">Uptime</div>
+        <div class="stat-detail">Hetzner VPS</div>
+      </div>
+      <div class="card" style="padding:20px;text-align:center;">
+        <div class="stat-num" style="font-size:28px;">&lt;2s</div>
+        <div class="stat-label">Resposta Bot</div>
+        <div class="stat-detail">média via Groq LLM</div>
+      </div>
+      <div class="card" style="padding:20px;text-align:center;">
+        <div class="stat-num counter" data-target="3">0</div>
+        <div class="stat-label">Redundâncias IA</div>
+        <div class="stat-detail">Groq/Gemini/Claude</div>
+      </div>
+    </div>
+    <div class="grid-cols-55 animate-up">
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <div style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:4px;">STACK EM PRODUÇÃO</div>
+        <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;">
+          <div class="card" style="padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
+            <span style="color:var(--text2);">Backend FastAPI</span>
+            <span class="badge badge-green">live</span>
+          </div>
+          <div class="card" style="padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
+            <span style="color:var(--text2);">Bot WhatsApp (Evolution v2)</span>
+            <span class="badge badge-green">live</span>
+          </div>
+          <div class="card" style="padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
+            <span style="color:var(--text2);">Painel Web PWA (React 19)</span>
+            <span class="badge badge-green">live</span>
+          </div>
+          <div class="card" style="padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
+            <span style="color:var(--text2);">Firebase Firestore multi-tenant</span>
+            <span class="badge badge-green">live</span>
+          </div>
+          <div class="card" style="padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
+            <span style="color:var(--text2);">SSE real-time sync</span>
+            <span class="badge badge-green">live</span>
+          </div>
+          <div class="card" style="padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
+            <span style="color:var(--text2);">Integração laticínio</span>
+            <span class="badge badge-amber">Q3 2026</span>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:12px;">ROADMAP</div>
+        <div class="chart-wrap" style="height:200px;">
+          <canvas id="roadmapChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ SLIDE 9 — PROJEÇÕES -->
+<section class="slide" id="slide-9">
+  <div class="slide-label animate-up">08 · Projeções Financeiras</div>
+  <div class="slide-title animate-up">Caminho Para<br><span class="accent">R$ 4,7M ARR em 36 meses</span></div>
+  <div class="slide-sub animate-up" style="margin-bottom:20px;">
+    Premissas conservadoras: ticket médio R$197, crescimento via boca a boca + inside sales.
+  </div>
+  <div class="scrollable" style="flex:1">
+    <div class="grid-cols-55 animate-up">
+      <div>
+        <div class="chart-wrap" style="height:250px;margin-bottom:16px;">
+          <canvas id="projChart"></canvas>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <div class="card" style="padding:16px;">
+          <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:10px;">ANO 1 · 12 MESES</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div><div style="font-size:20px;font-weight:800;color:var(--green-l);">150</div><div style="font-size:11px;color:var(--text2);">fazendas</div></div>
+            <div><div style="font-size:20px;font-weight:800;color:var(--green-l);">R$354K</div><div style="font-size:11px;color:var(--text2);">ARR</div></div>
+          </div>
+        </div>
+        <div class="card" style="padding:16px;">
+          <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:10px;">ANO 2 · 24 MESES</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div><div style="font-size:20px;font-weight:800;color:var(--cyan);">600</div><div style="font-size:11px;color:var(--text2);">fazendas</div></div>
+            <div><div style="font-size:20px;font-weight:800;color:var(--cyan);">R$1,4M</div><div style="font-size:11px;color:var(--text2);">ARR</div></div>
+          </div>
+        </div>
+        <div class="card" style="padding:16px;">
+          <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:10px;">ANO 3 · 36 MESES</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div><div style="font-size:20px;font-weight:800;color:var(--amber);">2.000</div><div style="font-size:11px;color:var(--text2);">fazendas</div></div>
+            <div><div style="font-size:20px;font-weight:800;color:var(--amber);">R$4,7M</div><div style="font-size:11px;color:var(--text2);">ARR</div></div>
+          </div>
+        </div>
+        <div class="card" style="padding:14px;background:rgba(22,163,74,0.05);border-color:rgba(74,222,128,0.2);">
+          <div style="font-size:11px;color:var(--text2);line-height:1.6;">
+            <strong style="color:var(--green-l);">Canal primário:</strong> indicação (1 fazenda → 3 vizinhos)<br>
+            <strong style="color:var(--green-l);">Canal secundário:</strong> cooperativas leiteiras (B2B2C)<br>
+            <strong style="color:var(--green-l);">Canal terciário:</strong> laticínios (white-label)
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ SLIDE 10 — RODADA -->
+<section class="slide" id="slide-10">
+  <div class="slide-label animate-up">09 · A Rodada</div>
+  <div class="slide-title animate-up">Captando <span class="accent">R$ 1,5M</span><br>Seed Round 2026</div>
+  <div class="slide-sub animate-up" style="margin-bottom:24px;">
+    Para accelerar growth, time e integração com laticínios parceiros.
+  </div>
+  <div class="scrollable" style="flex:1">
+    <div class="grid-cols-55 animate-up">
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <div style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:4px;">USO DOS RECURSOS</div>
+
+        <div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+            <span style="font-size:13px;font-weight:600;color:var(--text);">Tecnologia & IA</span>
+            <span style="font-size:13px;font-weight:700;color:var(--green-l);">40% · R$600K</span>
+          </div>
+          <div class="fund-bar"><div class="fund-fill" style="width:0%;background:linear-gradient(90deg,var(--green),var(--green-l));" data-w="40"></div></div>
+          <div style="font-size:11px;color:var(--text3);margin-top:4px;">Modelos proprietários, integração ERP laticínio, análise preditiva</div>
+        </div>
+
+        <div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+            <span style="font-size:13px;font-weight:600;color:var(--text);">Crescimento & Vendas</span>
+            <span style="font-size:13px;font-weight:700;color:var(--cyan);">35% · R$525K</span>
+          </div>
+          <div class="fund-bar"><div class="fund-fill" style="width:0%;background:linear-gradient(90deg,var(--cyan),#0ea5e9);" data-w="35"></div></div>
+          <div style="font-size:11px;color:var(--text3);margin-top:4px;">Inside sales, parcerias cooperativas, marketing digital rural</div>
+        </div>
+
+        <div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+            <span style="font-size:13px;font-weight:600;color:var(--text);">Equipe</span>
+            <span style="font-size:13px;font-weight:700;color:var(--amber);">25% · R$375K</span>
+          </div>
+          <div class="fund-bar"><div class="fund-fill" style="width:0%;background:linear-gradient(90deg,var(--amber),#f97316);" data-w="25"></div></div>
+          <div style="font-size:11px;color:var(--text3);margin-top:4px;">Dev full-stack sênior, vendas rural, CS agro</div>
+        </div>
+
+        <div class="card" style="padding:16px;margin-top:8px;background:rgba(22,163,74,0.05);border-color:rgba(74,222,128,0.2);">
+          <div style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:8px;">METAS PÓS-INVESTIMENTO (18 meses)</div>
+          <div style="display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--text2);">
+            <div style="display:flex;gap:8px;"><span class="accent">→</span> 500+ fazendas ativas</div>
+            <div style="display:flex;gap:8px;"><span class="accent">→</span> 3 cooperativas parceiras (B2B2C)</div>
+            <div style="display:flex;gap:8px;"><span class="accent">→</span> R$ 1M ARR · break-even operacional</div>
+            <div style="display:flex;gap:8px;"><span class="accent">→</span> 1 laticínio em white-label</div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="chart-wrap" style="height:240px;margin-bottom:16px;">
+          <canvas id="fundChart"></canvas>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div class="card" style="padding:14px;display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-size:12px;color:var(--text2);">Instrumento</span>
+            <span class="badge badge-green">Equity / SAFE</span>
+          </div>
+          <div class="card" style="padding:14px;display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-size:12px;color:var(--text2);">Valuation pré-money</span>
+            <span style="font-size:13px;font-weight:700;color:var(--text);">A definir</span>
+          </div>
+          <div class="card" style="padding:14px;display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-size:12px;color:var(--text2);">Runway</span>
+            <span style="font-size:13px;font-weight:700;color:var(--green-l);">18–24 meses</span>
+          </div>
+          <div class="card" style="padding:14px;display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-size:12px;color:var(--text2);">Próxima rodada alvo</span>
+            <span style="font-size:13px;font-weight:700;color:var(--cyan);">Série A · 2028</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ SLIDE 11 — EQUIPE -->
+<section class="slide" id="slide-11">
+  <div class="slide-label animate-up">10 · Equipe</div>
+  <div class="slide-title animate-up">Fundadores com<br><span class="accent">Pele no Jogo</span></div>
+  <div class="slide-sub animate-up" style="margin-bottom:24px;">
+    Time técnico com experiência em produto, IA e agronegócio.
+  </div>
+  <div class="scrollable" style="flex:1">
+    <div class="grid-3 animate-up" style="gap:16px;margin-bottom:24px;">
+      <div class="team-card">
+        <div class="team-avatar">FM</div>
+        <div class="team-name">Fred Martins</div>
+        <div class="team-role">CEO · Co-Fundador</div>
+        <div class="team-bio">Product & engineering. Construiu o MilkShow do zero — bot, API, painel, infra. Visão de produto no campo.</div>
+      </div>
+      <div class="team-card" style="border-style:dashed;border-color:rgba(74,222,128,0.2);">
+        <div class="team-avatar" style="background:var(--surface2);border:1px dashed rgba(74,222,128,0.3);color:var(--text3);font-size:20px;">+</div>
+        <div class="team-name" style="color:var(--text2);">Head of Growth</div>
+        <div class="team-role" style="color:var(--text3);">Buscando · Q3 2026</div>
+        <div class="team-bio" style="color:var(--text3);">Background em vendas rural ou cooperativismo. Conhece o campo por dentro.</div>
+      </div>
+      <div class="team-card" style="border-style:dashed;border-color:rgba(34,211,238,0.2);">
+        <div class="team-avatar" style="background:var(--surface2);border:1px dashed rgba(34,211,238,0.3);color:var(--text3);font-size:20px;">+</div>
+        <div class="team-name" style="color:var(--text2);">CTO / Dev Sênior</div>
+        <div class="team-role" style="color:var(--text3);">Buscando · Q3 2026</div>
+        <div class="team-bio" style="color:var(--text3);">Full-stack Python + React. IA/ML para modelos preditivos de rebanho.</div>
+      </div>
+    </div>
+    <div class="card animate-up" style="padding:20px;">
+      <div style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:12px;">ADVISORS & PARCEIROS ESTRATÉGICOS BUSCADOS</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">
+        <span class="badge badge-green">Embrapa Gado de Leite</span>
+        <span class="badge badge-cyan">Cooperativa Leiteira Regional</span>
+        <span class="badge badge-amber">Médico Veterinário Parceiro</span>
+        <span class="badge badge-green">Associação de Produtores MG/PR</span>
+        <span class="badge badge-cyan">Agro Angel Investor</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════ SLIDE 12 — CTA -->
+<section class="slide" id="slide-12" style="justify-content:center;background:radial-gradient(ellipse 80% 60% at 40% 50%, rgba(22,163,74,0.1) 0%, transparent 70%);">
+  <div style="text-align:center; max-width:700px; margin:auto;">
+    <div class="slide-label animate-up" style="text-align:center;margin-bottom:24px;">Vamos Juntos</div>
+    <div class="cover-logo animate-up" style="font-size:clamp(40px,6vw,72px);font-weight:900;letter-spacing:-0.04em;background:linear-gradient(135deg,#fff 30%,var(--green-l) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1;margin-bottom:16px;">
+      MilkShow
+    </div>
+    <div class="animate-up" style="font-size:clamp(16px,2vw,22px);color:var(--text2);font-weight:300;line-height:1.6;margin-bottom:32px;">
+      Estamos transformando o jeito que <strong style="color:var(--text);font-weight:600">1 milhão de famílias</strong><br>
+      gerenciam suas fazendas leiteiras no Brasil.<br>
+      A conversa começa agora.
+    </div>
+    <div class="animate-up" style="display:flex;flex-direction:column;align-items:center;gap:16px;">
+      <div style="font-size:24px;font-weight:800;color:var(--green-l);letter-spacing:-0.02em;">R$ 1,5M Seed Round</div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;">
+        <span class="badge badge-green" style="font-size:13px;padding:8px 20px;">Equity / SAFE</span>
+        <span class="badge badge-cyan" style="font-size:13px;padding:8px 20px;">18–24 meses runway</span>
+      </div>
+    </div>
+    <div class="animate-up" style="margin-top:48px;padding:24px;background:var(--surface);border:1px solid var(--border);border-radius:16px;">
+      <div style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:12px;letter-spacing:1px;">CONTATO</div>
+      <div style="font-size:16px;font-weight:600;color:var(--text);">fredmartins12</div>
+      <div style="font-size:13px;color:var(--green-l);margin-top:4px;">GitHub · github.com/fredmartins12/MilkShow</div>
+      <div style="font-size:12px;color:var(--text3);margin-top:8px;">Demo ao vivo disponível · Piloto com acesso aberto</div>
+    </div>
+    <div class="animate-up" style="margin-top:24px;font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">
+      Dados: Embrapa Anuário Leite 2025 · IBGE 2024 · Liga Ventures · Radar Agtech 2025
+    </div>
+  </div>
+</section>
+
+</div><!-- #deck -->
+
+<script>
+// ─── SLIDE ENGINE ──────────────────────────────────────────────────────────────
+const slides = document.querySelectorAll('.slide')
+const total  = slides.length
+let cur = 0, animating = false
+
+const dotsEl    = document.getElementById('dots')
+const counterEl = document.getElementById('counter')
+const fillEl    = document.getElementById('progress-fill')
+
+// Build dots
+slides.forEach((_, i) => {
+  const d = document.createElement('div')
+  d.className = 'dot' + (i === 0 ? ' active' : '')
+  d.onclick = () => go(i - cur)
+  dotsEl.appendChild(d)
+})
+
+function go(delta) {
+  if (animating) return
+  const next = cur + delta
+  if (next < 0 || next >= total) return
+  animating = true
+
+  const prev = cur
+  cur = next
+
+  // Exit old
+  slides[prev].classList.remove('active')
+  slides[prev].classList.add(delta > 0 ? 'exit-left' : '')
+  if (delta < 0) {
+    slides[prev].style.transform = 'translateX(60px)'
+    slides[prev].style.opacity   = '0'
+  }
+  setTimeout(() => {
+    slides[prev].classList.remove('exit-left')
+    slides[prev].style.transform = ''
+    slides[prev].style.opacity   = ''
+  }, 500)
+
+  // Enter new
+  if (delta < 0) {
+    slides[cur].style.transform = 'translateX(-60px)'
+    slides[cur].style.opacity   = '0'
+  }
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      slides[cur].style.transition = ''
+      slides[cur].style.transform  = ''
+      slides[cur].style.opacity    = ''
+      slides[cur].classList.add('active')
+    })
+  })
+
+  // Update UI
+  dotsEl.querySelectorAll('.dot').forEach((d, i) => d.classList.toggle('active', i === cur))
+  counterEl.textContent = `${String(cur + 1).padStart(2,'0')} / ${String(total).padStart(2,'0')}`
+  fillEl.style.width = `${((cur + 1) / total) * 100}%`
+
+  // Trigger counters and bars
+  triggerCounters(slides[cur])
+  triggerBars(slides[cur])
+
+  // Init charts for new slide
+  initCharts(cur)
+
+  setTimeout(() => { animating = false }, 520)
+}
+
+// Init counter display
+counterEl.textContent = `01 / ${String(total).padStart(2,'0')}`
+fillEl.style.width = `${(1 / total) * 100}%`
+
+// Keyboard nav
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight' || e.key === ' ')  go(+1)
+  if (e.key === 'ArrowLeft')  go(-1)
+  if (e.key === 'f' || e.key === 'F') {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen()
+    else document.exitFullscreen()
+  }
+})
+
+// Touch swipe
+let tx = 0
+document.addEventListener('touchstart', e => { tx = e.touches[0].clientX }, { passive: true })
+document.addEventListener('touchend',   e => {
+  const dx = e.changedTouches[0].clientX - tx
+  if (Math.abs(dx) > 60) go(dx < 0 ? +1 : -1)
+}, { passive: true })
+
+// ─── COUNTER ANIMATION ─────────────────────────────────────────────────────────
+function triggerCounters(slide) {
+  slide.querySelectorAll('.counter').forEach(el => {
+    const target  = parseFloat(el.dataset.target)
+    const suffix  = el.dataset.suffix || ''
+    const isFloat = el.dataset.target.includes('.')
+    let start = null
+    const dur = 1200
+    function step(ts) {
+      if (!start) start = ts
+      const p = Math.min((ts - start) / dur, 1)
+      const ease = 1 - Math.pow(1 - p, 3)
+      const val  = target * ease
+      el.textContent = isFloat ? val.toFixed(1) + suffix : Math.floor(val) + suffix
+      if (p < 1) requestAnimationFrame(step)
+    }
+    requestAnimationFrame(step)
+  })
+}
+
+// ─── BAR ANIMATION ────────────────────────────────────────────────────────────
+function triggerBars(slide) {
+  slide.querySelectorAll('.fund-fill[data-w]').forEach(el => {
+    setTimeout(() => {
+      el.style.transition = 'width 1s cubic-bezier(0.4,0,0.2,1)'
+      el.style.width = el.dataset.w + '%'
+    }, 300)
+  })
+}
+
+// ─── CHARTS ───────────────────────────────────────────────────────────────────
+const chartInstances = {}
+Chart.defaults.color = '#8fa3be'
+Chart.defaults.font.family = "'JetBrains Mono', monospace"
+Chart.defaults.font.size   = 10
+
+function initCharts(idx) {
+  if (idx === 3) initMktChart()
+  if (idx === 4) initAdoptChart()
+  if (idx === 7) initRoadmapChart()
+  if (idx === 8) initProjChart()
+  if (idx === 9) initFundChart()
+}
+
+function initMktChart() {
+  if (chartInstances.mkt) return
+  const ctx = document.getElementById('mktChart')
+  if (!ctx) return
+  chartInstances.mkt = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: ['2020', '2021', '2022', '2023', '2024'],
+      datasets: [{
+        label: 'Produção (B litros)',
+        data: [33.8, 35.1, 34.9, 35.2, 35.7],
+        backgroundColor: 'rgba(74,222,128,0.2)',
+        borderColor: 'rgba(74,222,128,0.8)',
+        borderWidth: 1.5,
+        borderRadius: 6,
+      }, {
+        label: 'Valor (R$B)',
+        data: [61, 74, 102, 78, 87.5],
+        backgroundColor: 'rgba(34,211,238,0.15)',
+        borderColor: 'rgba(34,211,238,0.6)',
+        borderWidth: 1.5,
+        borderRadius: 6,
+        yAxisID: 'y2',
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { padding: 12, font: { size: 10 } } }, tooltip: { mode: 'index' } },
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { font: { size: 9 } } },
+        y:  { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { callback: v => v + 'B' } },
+        y2: { position: 'right', grid: { display: false }, ticks: { callback: v => 'R$' + v + 'B' } },
+      }
+    }
+  })
+}
+
+function initAdoptChart() {
+  if (chartInstances.adopt) return
+  const ctx = document.getElementById('adoptChart')
+  if (!ctx) return
+  chartInstances.adopt = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: ['Dia 1', 'Semana 1', 'Mês 1', 'Mês 3', 'Mês 6'],
+      datasets: [{
+        label: 'MilkShow (WhatsApp)',
+        data: [100, 92, 88, 85, 84],
+        backgroundColor: 'rgba(74,222,128,0.25)',
+        borderColor: 'rgba(74,222,128,0.8)',
+        borderWidth: 1.5, borderRadius: 6,
+      }, {
+        label: 'App Tradicional',
+        data: [100, 61, 38, 22, 14],
+        backgroundColor: 'rgba(239,68,68,0.15)',
+        borderColor: 'rgba(239,68,68,0.5)',
+        borderWidth: 1.5, borderRadius: 6,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { padding: 12, font: { size: 10 } } }, tooltip: {} },
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { grid: { color: 'rgba(255,255,255,0.04)' }, min: 0, max: 100, ticks: { callback: v => v + '%' } }
+      }
+    }
+  })
+}
+
+function initRoadmapChart() {
+  if (chartInstances.roadmap) return
+  const ctx = document.getElementById('roadmapChart')
+  if (!ctx) return
+  chartInstances.roadmap = new Chart(ctx, {
+    type: 'radar',
+    data: {
+      labels: ['Bot IA', 'Painel Web', 'Financeiro', 'Sanidade', 'Rebanho', 'Multi-user', 'Integ. Laticínio', 'Modelo Preditivo'],
+      datasets: [{
+        label: 'Completo',
+        data: [100, 95, 90, 88, 85, 80, 20, 10],
+        backgroundColor: 'rgba(74,222,128,0.15)',
+        borderColor: 'rgba(74,222,128,0.7)',
+        borderWidth: 1.5, pointBackgroundColor: 'rgba(74,222,128,0.8)',
+      }, {
+        label: 'Meta 12m',
+        data: [100, 100, 100, 100, 100, 100, 80, 60],
+        backgroundColor: 'rgba(34,211,238,0.08)',
+        borderColor: 'rgba(34,211,238,0.4)',
+        borderWidth: 1, borderDash: [4, 4], pointBackgroundColor: 'transparent',
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { padding: 12, font: { size: 10 } } } },
+      scales: {
+        r: {
+          grid: { color: 'rgba(255,255,255,0.06)' },
+          pointLabels: { font: { size: 9 }, color: '#8fa3be' },
+          ticks: { display: false }, min: 0, max: 100,
+          angleLines: { color: 'rgba(255,255,255,0.04)' }
+        }
+      }
+    }
+  })
+}
+
+function initProjChart() {
+  if (chartInstances.proj) return
+  const ctx = document.getElementById('projChart')
+  if (!ctx) return
+  chartInstances.proj = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: ['Q1','Q2','Q3','Q4','Q5','Q6','Q7','Q8','Q9','Q10','Q11','Q12'],
+      datasets: [{
+        label: 'MRR (R$K)',
+        data: [5, 10, 18, 29.5, 44, 62, 85, 118, 155, 225, 320, 394],
+        backgroundColor: ctx => {
+          const g = ctx.chart.ctx.createLinearGradient(0, 0, 0, 250)
+          g.addColorStop(0, 'rgba(74,222,128,0.5)')
+          g.addColorStop(1, 'rgba(34,211,238,0.15)')
+          return g
+        },
+        borderColor: 'rgba(74,222,128,0.8)',
+        borderWidth: 1, borderRadius: 6,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        annotation: {},
+        tooltip: { callbacks: { label: c => 'R$' + c.parsed.y + 'K MRR' } }
+      },
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { callback: v => 'R$' + v + 'K' } }
+      }
+    }
+  })
+}
+
+function initFundChart() {
+  if (chartInstances.fund) return
+  const ctx = document.getElementById('fundChart')
+  if (!ctx) return
+  chartInstances.fund = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: ['Tecnologia & IA', 'Crescimento & Vendas', 'Equipe'],
+      datasets: [{
+        data: [40, 35, 25],
+        backgroundColor: ['rgba(74,222,128,0.7)', 'rgba(34,211,238,0.7)', 'rgba(245,158,11,0.7)'],
+        borderColor: ['rgba(74,222,128,0.2)', 'rgba(34,211,238,0.2)', 'rgba(245,158,11,0.2)'],
+        borderWidth: 1, hoverOffset: 8,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      cutout: '68%',
+      plugins: {
+        legend: { position: 'bottom', labels: { padding: 16, font: { size: 10 } } },
+        tooltip: { callbacks: { label: c => c.label + ': ' + c.parsed + '%  ·  R$' + [600,525,375][c.dataIndex] + 'K' } }
+      }
+    }
+  })
+}
+
+// init first slide triggers
+triggerCounters(slides[0])
+triggerBars(slides[0])
+</script>
+</body>
+</html>
