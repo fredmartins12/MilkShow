@@ -62,4 +62,13 @@ export const api = {
   // Config
   config:               ()               => req('GET',  '/config'),
   salvarConfig:         (body)           => req('POST', '/config',           body),
+
+  // Ranking de rentabilidade
+  ranking:              (dias = 30)      => req('GET',  `/ranking?dias=${dias}`),
+
+  // SSE — atualizações em tempo real
+  openEventSource: () => {
+    const token = getToken()
+    return new EventSource(`${BASE}/eventos?token=${encodeURIComponent(token)}`)
+  },
 }

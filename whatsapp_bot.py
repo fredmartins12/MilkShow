@@ -45,7 +45,7 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("milkshow_bot")
 
 from starlette.middleware.cors import CORSMiddleware
-from mobile_api import mobile_router
+from mobile_api import mobile_router, notify_update
 
 app = FastAPI(title="MilkShow WhatsApp Bot", version="1.0", docs_url=None, redoc_url=None)
 
@@ -2159,6 +2159,8 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
         return f"*Estoque atual:*\n{_ctx_estoque(fazenda_id)}"
     if lower in ("resumo", "status", "/resumo"):
         return _relatorio_manha(fazenda_id)
+    if lower in ("ranking", "rentabilidade", "/ranking"):
+        return _gerar_ranking_rentabilidade(fazenda_id)
     # Pausar: "pausar 2h" / "pausar 30min"
     _m_pausar = re.match(r'^pausar\s+(\d+)\s*(h|hora|horas|min|minutos?)?$', lower)
     if _m_pausar or lower in ("pausar", "silencio", "silêncio", "nao perturbe", "não perturbe"):
@@ -2248,6 +2250,15 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
             if fp["estado"] == "SALVAR" and fp.get("tipo") and fp.get("dados"):
                 if _tem_permissao(permissoes, fp["tipo"]):
                     resposta_fp = _salvar(fp["tipo"], fp["dados"], fazenda_id, registrado_por=tel)
+                    try:
+                        notify_update(fazenda_id,
+                            "producao" if "PRODUCAO" in fp["tipo"] else
+                            "animais"  if fp["tipo"] in ("NOVO_ANIMAL","REPRODUCAO","MORTE_ANIMAL") else
+                            "estoque"  if "ESTOQUE" in fp["tipo"] else
+                            "financeiro"
+                        )
+                    except Exception:
+                        pass
                     _clear_conv(tel)
                     return resposta_fp
                 else:
@@ -2334,6 +2345,20 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
         _clear_conv(tel)
         return _msg_sem_permissao(tipo)
 
+    # Mapa: tipo de registro → coleção Firestore (para notify_update)
+    _TIPO_COLECAO = {
+        "PRODUCAO_LEITE": "producao", "PRODUCAO_MULTIPLA": "producao",
+        "VENDA_LEITE": "financeiro",
+        "GASTO_GERAL": "financeiro", "GASTO_SANITARIO": "financeiro",
+        "COMPRA_PRODUTO": "financeiro", "VENDA_ANIMAL": "financeiro",
+        "COMPRA_ANIMAL": "financeiro",
+        "NOVO_ANIMAL": "animais", "REPRODUCAO": "animais",
+        "MORTE_ANIMAL": "animais", "ATUALIZAR_ANIMAL": "animais",
+        "AGENDAR_SANITARIO": "sanitario", "EXECUTAR_PROTOCOLO": "sanitario",
+        "AJUSTAR_ESTOQUE": "estoque",
+        "ALTERAR_CONFIG": "config",
+    }
+
     if estado == "SALVAR":
         # Verifica de novo no SALVAR (segurança dupla — caso tipo mude durante coleta)
         if tipo and not _tem_permissao(permissoes, tipo):
@@ -2370,6 +2395,12 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
             else:
                 resposta = _salvar(tipo, dados, fazenda_id, registrado_por=tel)
                 ultimo_salvo = {"tipo": tipo, "dados": dados, "itens": None, "resposta": resposta}
+            # Notifica frontend em tempo real
+            _colecao_notif = _TIPO_COLECAO.get(tipo or "", "all")
+            try:
+                notify_update(fazenda_id, _colecao_notif)
+            except Exception:
+                pass
         except Exception as e:
             log.error(f"Erro ao salvar: {e}")
             resposta = f"Erro ao salvar: {str(e)[:120]}"
@@ -3793,6 +3824,106 @@ def _relatorio_manha(fazenda_id: str) -> str:
 
 
 # ─────────────────────────────────────────────
+# RANKING DE RENTABILIDADE (mensal)
+# ─────────────────────────────────────────────
+def _gerar_ranking_rentabilidade(fazenda_id: str, dias: int = 30) -> str:
+    """Ranking de rentabilidade por vaca: receita do leite vs custo de ração e vet."""
+    hoje = datetime.date.today()
+    ini  = (hoje - datetime.timedelta(days=dias)).isoformat()
+
+    # Preço do leite: config > média das vendas
+    preco_litro = 2.50
+    try:
+        for d in _coll(fazenda_id, "config").stream():
+            c = d.to_dict()
+            if c.get("chave") == "preco_leite" or d.id == "preco_leite":
+                preco_litro = float(c.get("valor", 2.50))
+                break
+        if preco_litro == 2.50:
+            vendas = list(_coll(fazenda_id, "financeiro")
+                          .where(filter=FieldFilter("data", ">=", ini)).stream())
+            vals = [d.to_dict() for d in vendas
+                    if "Venda" in (d.to_dict().get("cat") or d.to_dict().get("categoria", ""))]
+            if vals:
+                total_rec = sum(v.get("valor", 0) for v in vals)
+                prod_prd  = list(_coll(fazenda_id, "producao")
+                                 .where(filter=FieldFilter("data", ">=", ini)).stream())
+                total_lit = sum(d.to_dict().get("leite", 0) for d in prod_prd)
+                if total_lit > 0:
+                    preco_litro = total_rec / total_lit
+    except Exception:
+        pass
+
+    # Custo ração/kg do estoque
+    custo_racao_kg = 1.20
+    try:
+        for e in _coll(fazenda_id, "estoque").stream():
+            ed = e.to_dict()
+            item = (ed.get("item") or "").lower()
+            if any(k in item for k in ("ração", "racao", "concentrado", "milho")):
+                val = float(ed.get("custo_unit") or 0)
+                if val > 0:
+                    custo_racao_kg = val
+                    break
+    except Exception:
+        pass
+
+    # Dados de produção
+    ranking: dict = {}
+    try:
+        for d in (_coll(fazenda_id, "producao")
+                  .where(filter=FieldFilter("data", ">=", ini)).stream()):
+            p    = d.to_dict()
+            nome = p.get("nome_animal") or "Rebanho"
+            if nome not in ranking:
+                ranking[nome] = {"litros": 0.0, "racao_kg": 0.0, "custo_vet": 0.0}
+            ranking[nome]["litros"]   += float(p.get("leite") or 0)
+            ranking[nome]["racao_kg"] += float(p.get("racao") or 0)
+    except Exception:
+        pass
+
+    # Custos veterinários
+    try:
+        for d in (_coll(fazenda_id, "sanitario")
+                  .where(filter=FieldFilter("data", ">=", ini)).stream()):
+            s    = d.to_dict()
+            nome = s.get("nome_animal") or s.get("animal") or "Rebanho"
+            val  = float(s.get("valor") or 0)
+            if nome in ranking:
+                ranking[nome]["custo_vet"] += val
+    except Exception:
+        pass
+
+    if not ranking:
+        return "Sem dados de produção nos últimos 30 dias para calcular o ranking."
+
+    # Calcula e ordena
+    resultado = []
+    for nome, r in ranking.items():
+        receita     = r["litros"] * preco_litro
+        custo_racao = r["racao_kg"] * custo_racao_kg
+        custo_total = custo_racao + r["custo_vet"]
+        margem      = receita - custo_total
+        resultado.append((nome, r["litros"], receita, custo_total, margem))
+    resultado.sort(key=lambda x: x[4], reverse=True)
+
+    linhas = [
+        f"*🏆 Ranking de Rentabilidade — {dias} dias*\n"
+        f"Preço leite: R${preco_litro:.2f}/L · Ração: R${custo_racao_kg:.2f}/kg\n"
+    ]
+    medalhas = ["🥇", "🥈", "🥉"]
+    for i, (nome, litros, receita, custo, margem) in enumerate(resultado[:10]):
+        med = medalhas[i] if i < 3 else f"{i+1}."
+        sinal = "+" if margem >= 0 else ""
+        linhas.append(
+            f"{med} *{nome}* — {litros:.0f}L\n"
+            f"   Receita R${receita:.0f} · Custo R${custo:.0f} · Margem *{sinal}R${margem:.0f}*"
+        )
+
+    return "\n".join(linhas)
+
+
+# ─────────────────────────────────────────────
 # BACKUP SEMANAL (Firestore → JSON local)
 # ─────────────────────────────────────────────
 def _backup_fazenda(fazenda_id: str) -> bool:
@@ -3903,6 +4034,13 @@ async def _loop_agendador():
                     if segunda and eh_6h:
                         rel = _gerar_relatorio_semanal(fazenda_id)
                         _enviar_whatsapp(tel, rel)
+
+                    # Ranking de rentabilidade — dia 1 de cada mês às 6h
+                    if hoje.day == 1 and eh_6h:
+                        ranking_msg = await _asyncio.to_thread(
+                            _gerar_ranking_rentabilidade, fazenda_id, 30
+                        )
+                        _enviar_whatsapp(tel, ranking_msg)
 
                 except Exception as e:
                     log.error(f"Agendador erro para {tel}: {e}")

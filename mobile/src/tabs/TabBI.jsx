@@ -180,6 +180,7 @@ export default function TabBI() {
   const [prodRaw, setProdRaw]     = useState([])
   const [prodChart, setProdChart] = useState([])
   const [topProdutoras, setTop]   = useState([])
+  const [ranking, setRanking]     = useState(null)
   const [loading, setLoading]     = useState(true)
   const [erro, setErro]           = useState('')
   const [periodo, setPeriodo]     = useState(14)
@@ -211,33 +212,53 @@ export default function TabBI() {
     )
   }, [])
 
-  async function carregar() {
-    setLoading(true); setErro('')
+  const carregarRef = useCallback(async (silencioso = false) => {
+    if (!silencioso) { setLoading(true); setErro('') }
     try {
-      const [d, a, p, s, e] = await Promise.all([
+      const [d, a, p, s, e, r] = await Promise.all([
         api.dashboard(),
         api.animais(),
-        api.producao(90), // busca 90d para calcular rentabilidade
+        api.producao(90),
         api.sanitario(60),
         api.estoque(),
+        api.ranking(30),
       ])
       setDash(d)
       setAnimais(a.filter(x => x.status !== 'Vendido'))
       setProdRaw(p)
       setSanitario(s)
       setEstoque(e)
+      setRanking(r)
       buildProdChart(p, 14)
-    } catch (e) { setErro(e.message) }
-    finally { setLoading(false) }
-  }
+    } catch (e) { if (!silencioso) setErro(e.message) }
+    finally { if (!silencioso) setLoading(false) }
+  }, [buildProdChart])
+
+  const carregar = useCallback(() => carregarRef(false), [carregarRef])
 
   useEffect(() => { carregar() }, [])
 
-  // Auto-refresh a cada 60s
+  // SSE — re-carrega silenciosamente quando o bot salva algo
   useEffect(() => {
-    const id = setInterval(() => { carregar() }, 60000)
+    let es
+    try {
+      es = api.openEventSource()
+      es.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(ev.data)
+          if (data.type === 'update') carregarRef(true)
+        } catch {}
+      }
+      es.onerror = () => { es?.close() }
+    } catch {}
+    return () => { es?.close() }
+  }, [carregarRef])
+
+  // Auto-refresh a cada 2min como fallback
+  useEffect(() => {
+    const id = setInterval(() => carregarRef(true), 120000)
     return () => clearInterval(id)
-  }, [])
+  }, [carregarRef])
 
   // Re-calcula gráfico quando período muda (sem reload)
   useEffect(() => { buildProdChart(prodRaw, periodo) }, [periodo, prodRaw, buildProdChart])
@@ -253,32 +274,15 @@ export default function TabBI() {
   const mes     = dash.mes    || {}
   const preco_leite     = Number(dash.preco_leite     || 2.50)
   const custo_por_litro = Number(dash.custo_por_litro || 1.18)
+  const custo_racao_kg  = Number(dash.custo_racao_kg  || 1.20)
   const meta_producao   = Number(dash.meta_producao   || 0)
 
-  const custo   = custo_por_litro || 1.18
-  const margem  = preco_leite > 0 ? (((preco_leite - custo) / preco_leite) * 100) : 0
+  const custo     = custo_por_litro || 1.18
+  const margem    = preco_leite > 0 ? (((preco_leite - custo) / preco_leite) * 100) : 0
   const pendentes = (h.vacas_lact || 0) - (h.vacas_ordenhadas || 0)
 
-  // Rentabilidade por animal (últimos 30 dias)
-  const ini30 = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
-  const rentab = {}
-  prodRaw.filter(r => r.data >= ini30).forEach(r => {
-    const nome = r.nome_animal || '?'
-    if (!rentab[nome]) rentab[nome] = { nome, litros: 0, racao_kg: 0 }
-    rentab[nome].litros   += Number(r.leite  || 0)
-    rentab[nome].racao_kg += Number(r.racao  || 0)
-  })
-  const rentabList = Object.values(rentab)
-    .map(r => ({
-      ...r,
-      litros:      +Number(r.litros   || 0).toFixed(1),
-      racao_kg:    +Number(r.racao_kg || 0).toFixed(1),
-      receita:     +Number((r.litros || 0) * preco_leite).toFixed(2),
-      custo_racao: +Number((r.racao_kg || 0) * 1.20).toFixed(2),
-      margem:      +Number((r.litros || 0) * preco_leite - (r.racao_kg || 0) * 1.20).toFixed(2),
-    }))
-    .sort((a, b) => b.margem - a.margem)
-    .slice(0, 10)
+  // Ranking vem da API (custo real de ração + vet)
+  const rentabList = ranking?.ranking || []
 
   const KPIS = [
     {
@@ -409,7 +413,10 @@ export default function TabBI() {
 
       {/* Rentabilidade por animal */}
       <div className="flex-1 overflow-auto">
-        <SectionHeader title="Rentabilidade por Animal" sub="últimos 30 dias · leite vs ração" />
+        <SectionHeader
+          title="Ranking de Rentabilidade"
+          sub={`30 dias · R$${preco_leite.toFixed(2)}/L · ração R$${custo_racao_kg.toFixed(2)}/kg`}
+        />
 
         {rentabList.length === 0 ? (
           <div className="p-5 text-center text-slate-700 text-xs font-mono">
@@ -417,31 +424,42 @@ export default function TabBI() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs font-mono min-w-[560px]">
+            <table className="w-full text-xs font-mono min-w-[640px]">
               <thead>
                 <tr style={{ borderBottom: `1px solid ${T.border}` }}>
-                  {['Animal', 'Litros 30d', 'Ração (kg)', 'Receita', 'Custo Ração', 'Margem'].map(h =>
-                    <th key={h} className="text-left px-4 py-2.5 text-slate-600 font-medium text-[11px] tracking-wider first:pl-5">
+                  {['#', 'Animal', 'Litros', 'Receita', 'Custo Total', 'R$/L', 'Margem'].map(h =>
+                    <th key={h} className="text-left px-3 py-2.5 text-slate-600 font-medium text-[11px] tracking-wider first:pl-5">
                       {h}
                     </th>
                   )}
                 </tr>
               </thead>
               <tbody>
-                {rentabList.map((r, i) => (
-                  <tr key={r.nome} className="hover:bg-white/[0.02]"
-                      style={{ borderBottom: `1px solid ${T.border2}` }}>
-                    <td className="px-5 py-2.5 text-slate-200 font-semibold">{r.nome}</td>
-                    <td className="px-4 py-2.5 text-blue-400 tabular-nums">{r.litros} L</td>
-                    <td className="px-4 py-2.5 text-slate-500 tabular-nums">{r.racao_kg} kg</td>
-                    <td className="px-4 py-2.5 text-emerald-400 tabular-nums">{fmtBRL(r.receita)}</td>
-                    <td className="px-4 py-2.5 text-slate-500 tabular-nums">{fmtBRL(r.custo_racao)}</td>
-                    <td className="px-4 py-2.5 tabular-nums font-semibold"
-                        style={{ color: r.margem >= 0 ? '#10b981' : '#ef4444' }}>
-                      {r.margem >= 0 ? '+' : ''}{fmtBRL(r.margem)}
-                    </td>
-                  </tr>
-                ))}
+                {rentabList.map((r, i) => {
+                  const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}`
+                  return (
+                    <tr key={r.nome} className="hover:bg-white/[0.02]"
+                        style={{ borderBottom: `1px solid ${T.border2}` }}>
+                      <td className="pl-5 pr-2 py-2.5 text-slate-500 tabular-nums w-8">{medal}</td>
+                      <td className="px-3 py-2.5 text-slate-200 font-semibold">{r.nome}</td>
+                      <td className="px-3 py-2.5 text-blue-400 tabular-nums">{r.litros} L</td>
+                      <td className="px-3 py-2.5 text-emerald-400 tabular-nums">{fmtBRL(r.receita)}</td>
+                      <td className="px-3 py-2.5 tabular-nums" style={{ color: '#94a3b8' }}>
+                        {fmtBRL(r.custo_total)}
+                        {r.custo_vet > 0 && (
+                          <span className="text-[10px] text-slate-600 ml-1">(+{fmtBRL(r.custo_vet)} vet)</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2.5 text-slate-500 tabular-nums">
+                        {r.custo_litro > 0 ? `R$${r.custo_litro.toFixed(2)}` : '—'}
+                      </td>
+                      <td className="px-3 py-2.5 tabular-nums font-semibold"
+                          style={{ color: r.margem >= 0 ? '#10b981' : '#ef4444' }}>
+                        {r.margem >= 0 ? '+' : ''}{fmtBRL(r.margem)}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

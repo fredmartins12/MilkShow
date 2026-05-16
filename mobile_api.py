@@ -13,13 +13,15 @@ import re
 import hmac
 import hashlib
 import json
+import asyncio
 import datetime
 import time
 import base64
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import firebase_admin
@@ -27,6 +29,18 @@ from firebase_admin import credentials, firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 mobile_router = APIRouter(prefix="/api/v1", tags=["mobile"])
+
+# ─────────────────────────────────────────────
+# NOTIFICAÇÕES EM TEMPO REAL (SSE)
+# ─────────────────────────────────────────────
+# Dicionário: fazenda_id → {"colecao": str, "ts": float}
+# Atualizado pelo bot após cada escrita — clientes SSE detectam a mudança
+_UPDATE_TS: dict = {}
+
+
+def notify_update(fazenda_id: str, colecao: str = "all"):
+    """Chamado pelo bot após salvar dados — acorda clientes SSE daquela fazenda."""
+    _UPDATE_TS[fazenda_id] = {"colecao": colecao, "ts": time.time()}
 
 # ─────────────────────────────────────────────
 # JWT simples (sem dependência extra)
@@ -75,6 +89,26 @@ def _coll(fazenda_id: str, nome: str):
         return db.collection(nome)
     return db.collection("fazendas").document(fazenda_id).collection(nome)
 
+
+def _custo_racao_kg_real(fazenda_id: str) -> float:
+    """Retorna o custo real da ração/kg baseado no estoque. Fallback: 1.20."""
+    try:
+        for e in _coll(fazenda_id, "estoque").stream():
+            ed = e.to_dict()
+            item = (ed.get("item") or "").lower()
+            if any(k in item for k in ("ração", "racao", "concentrado", "milho")):
+                qtd = float(ed.get("qtd") or 0)
+                val = float(ed.get("custo_unit") or 0)
+                if val > 0:
+                    return round(val, 4)
+                # Calcula por valor_total / qtd se disponível
+                val_tot = float(ed.get("valor_total") or 0)
+                if qtd > 0 and val_tot > 0:
+                    return round(val_tot / qtd, 4)
+    except Exception:
+        pass
+    return 1.20
+
 def _normalizar_tel(raw: str) -> str:
     digits = re.sub(r'\D', '', raw.strip())
     if not digits.startswith('55'):
@@ -97,6 +131,12 @@ def _variantes_tel(tel: str):
 # ─────────────────────────────────────────────
 # Auth dependency
 # ─────────────────────────────────────────────
+def _get_user_from_token(token: str) -> Optional[dict]:
+    """Extrai e valida payload JWT de um token string."""
+    payload = _jwt_decode(token.strip())
+    return payload  # None se inválido
+
+
 def _get_user(authorization: str = Header(default="")):
     token = authorization.replace("Bearer ", "").strip()
     payload = _jwt_decode(token)
@@ -293,6 +333,7 @@ def dashboard(user=Depends(_get_user)):
     preco_leite     = float(config.get("preco_leite", 2.50))
     custo_por_litro = float(config.get("custo_por_litro", 1.18))
     meta_producao   = float(config.get("meta_producao", 0))
+    custo_racao_kg  = _custo_racao_kg_real(fid)
 
     def _delta(atual, anterior):
         if anterior and anterior > 0:
@@ -326,6 +367,7 @@ def dashboard(user=Depends(_get_user)):
         },
         "preco_leite":     preco_leite,
         "custo_por_litro": custo_por_litro,
+        "custo_racao_kg":  custo_racao_kg,
         "meta_producao":   meta_producao,
     }
 
@@ -370,12 +412,14 @@ def registrar_producao(body: ProducaoInput, user=Depends(_get_user)):
     doc["registrado_por"] = user.get("nome") or user.get("email") or user.get("tel", "")
     doc["ts"] = datetime.datetime.now().isoformat()
     _coll(fid, "producao").add(doc)
+    notify_update(fid, "producao")
     return {"ok": True}
 
 @mobile_router.delete("/producao/{pid}")
 def remover_producao(pid: str, user=Depends(_get_user)):
     fid = user["fazenda_id"]
     _coll(fid, "producao").document(pid).delete()
+    notify_update(fid, "producao")
     return {"ok": True}
 
 
@@ -405,12 +449,14 @@ def registrar_financeiro(body: FinanceiroInput, user=Depends(_get_user)):
     doc["registrado_por"] = user.get("nome", user.get("email", ""))
     doc["ts"] = datetime.datetime.now().isoformat()
     _coll(fid, "financeiro").add(doc)
+    notify_update(fid, "financeiro")
     return {"ok": True}
 
 @mobile_router.delete("/financeiro/{fid_doc}")
 def remover_financeiro(fid_doc: str, user=Depends(_get_user)):
     fid = user["fazenda_id"]
     _coll(fid, "financeiro").document(fid_doc).delete()
+    notify_update(fid, "financeiro")
     return {"ok": True}
 
 @mobile_router.patch("/financeiro/{fid_doc}")
@@ -423,6 +469,7 @@ def atualizar_financeiro(fid_doc: str, body: FinanceiroInput, user=Depends(_get_
         doc["cat"] = doc["categoria"]
     doc["atualizado_em"] = datetime.datetime.now().isoformat()
     _coll(fid, "financeiro").document(fid_doc).set(doc, merge=True)
+    notify_update(fid, "financeiro")
     return {"ok": True}
 
 
@@ -446,12 +493,14 @@ def registrar_estoque(body: EstoqueInput, user=Depends(_get_user)):
     doc = body.model_dump()
     doc["atualizado_em"] = datetime.datetime.now().isoformat()
     _, ref = _coll(fid, "estoque").add(doc)
+    notify_update(fid, "estoque")
     return {"id": ref.id, **doc}
 
 @mobile_router.delete("/estoque/{item_id}")
 def remover_estoque(item_id: str, user=Depends(_get_user)):
     fid = user["fazenda_id"]
     _coll(fid, "estoque").document(item_id).delete()
+    notify_update(fid, "estoque")
     return {"ok": True}
 
 @mobile_router.patch("/estoque/{item_id}")
@@ -460,6 +509,7 @@ def atualizar_estoque(item_id: str, body: EstoqueInput, user=Depends(_get_user))
     doc = body.model_dump()
     doc["atualizado_em"] = datetime.datetime.now().isoformat()
     _coll(fid, "estoque").document(item_id).set(doc)
+    notify_update(fid, "estoque")
     return {"id": item_id, **doc}
 
 
@@ -487,12 +537,14 @@ def adicionar_animal(body: AnimalInput, user=Depends(_get_user)):
         _coll(fid, "animais").document(aid).set(doc, merge=True)
     else:
         _coll(fid, "animais").add(doc)
+    notify_update(fid, "animais")
     return {"ok": True}
 
 @mobile_router.delete("/animais/{aid}")
 def remover_animal(aid: str, user=Depends(_get_user)):
     fid = user["fazenda_id"]
     _coll(fid, "animais").document(aid).update({"status": "Vendido"})
+    notify_update(fid, "animais")
     return {"ok": True}
 
 
@@ -527,6 +579,7 @@ def registrar_sanitario(body: SanitarioInput, user=Depends(_get_user)):
     doc["registrado_por"] = user.get("nome", "")
     doc["ts"] = datetime.datetime.now().isoformat()
     _coll(fid, "sanitario").add(doc)
+    notify_update(fid, "sanitario")
     return {"ok": True}
 
 @mobile_router.patch("/sanitario/{sid}/executar")
@@ -537,6 +590,7 @@ def executar_sanitario(sid: str, user=Depends(_get_user)):
         "executado_em": datetime.datetime.now().isoformat(),
         "executado_por": user.get("nome", ""),
     })
+    notify_update(fid, "sanitario")
     return {"ok": True}
 
 
@@ -557,7 +611,112 @@ def salvar_config(body: dict, user=Depends(_get_user)):
     fid = user["fazenda_id"]
     for chave, valor in body.items():
         _coll(fid, "config").document(str(chave)).set({"chave": str(chave), "valor": valor})
+    notify_update(fid, "config")
     return {"ok": True}
+
+
+# ─────────────────────────────────────────────
+# RANKING DE RENTABILIDADE POR ANIMAL
+# ─────────────────────────────────────────────
+@mobile_router.get("/ranking")
+def ranking_rentabilidade(dias: int = 30, user=Depends(_get_user)):
+    """Ranking de rentabilidade por animal: litros vs custo ração + veterinário."""
+    fid = user["fazenda_id"]
+    ini = (datetime.date.today() - datetime.timedelta(days=dias)).isoformat()
+
+    config = {}
+    for d in _coll(fid, "config").stream():
+        c = d.to_dict()
+        config[c.get("chave", d.id)] = c.get("valor")
+    preco_leite    = float(config.get("preco_leite", 2.50))
+    custo_racao_kg = _custo_racao_kg_real(fid)
+
+    prod_docs = [d.to_dict() for d in
+                 _coll(fid, "producao")
+                 .where(filter=FieldFilter("data", ">=", ini)).stream()]
+
+    san_docs = [d.to_dict() for d in
+                _coll(fid, "sanitario")
+                .where(filter=FieldFilter("data", ">=", ini)).stream()]
+
+    ranking: dict = {}
+    for p in prod_docs:
+        nome = p.get("nome_animal") or "Rebanho"
+        if nome not in ranking:
+            ranking[nome] = {"nome": nome, "litros": 0.0, "racao_kg": 0.0, "custo_vet": 0.0}
+        ranking[nome]["litros"]   += float(p.get("leite")  or 0)
+        ranking[nome]["racao_kg"] += float(p.get("racao")  or 0)
+
+    for s in san_docs:
+        nome = s.get("nome_animal") or s.get("animal") or "Rebanho"
+        val  = float(s.get("valor") or 0)
+        if nome in ranking:
+            ranking[nome]["custo_vet"] += val
+
+    result = []
+    for r in ranking.values():
+        receita     = r["litros"] * preco_leite
+        custo_racao = r["racao_kg"] * custo_racao_kg
+        custo_total = custo_racao + r["custo_vet"]
+        margem      = receita - custo_total
+        custo_litro = custo_total / r["litros"] if r["litros"] > 0 else 0
+        result.append({
+            "nome":        r["nome"],
+            "litros":      round(r["litros"], 1),
+            "racao_kg":    round(r["racao_kg"], 1),
+            "receita":     round(receita, 2),
+            "custo_racao": round(custo_racao, 2),
+            "custo_vet":   round(r["custo_vet"], 2),
+            "custo_total": round(custo_total, 2),
+            "margem":      round(margem, 2),
+            "custo_litro": round(custo_litro, 4),
+        })
+
+    return {
+        "dias":           dias,
+        "preco_leite":    preco_leite,
+        "custo_racao_kg": round(custo_racao_kg, 2),
+        "ranking":        sorted(result, key=lambda x: x["margem"], reverse=True),
+    }
+
+
+# ─────────────────────────────────────────────
+# SSE — ATUALIZAÇÕES EM TEMPO REAL
+# ─────────────────────────────────────────────
+@mobile_router.get("/eventos")
+async def eventos_sse(token: str = Query(default="")):
+    """Server-Sent Events: notifica o frontend quando o bot salva novos dados.
+    O token JWT é passado como query param pois EventSource não suporta headers."""
+    user = _get_user_from_token(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Token inválido")
+    fid = user["fazenda_id"]
+
+    async def generator():
+        # Evento inicial de conexão
+        yield "data: {\"type\":\"connected\"}\n\n"
+        last_ts = _UPDATE_TS.get(fid, {}).get("ts", 0)
+        while True:
+            await asyncio.sleep(3)
+            current = _UPDATE_TS.get(fid, {})
+            cur_ts  = current.get("ts", 0)
+            if cur_ts > last_ts:
+                last_ts = cur_ts
+                payload = json.dumps({"type": "update", "colecao": current.get("colecao", "all")})
+                yield f"data: {payload}\n\n"
+            else:
+                # Heartbeat para manter conexão viva
+                yield ": keepalive\n\n"
+
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control":    "no-cache",
+            "X-Accel-Buffering": "no",   # desabilita buffer do nginx
+            "Connection":       "keep-alive",
+        },
+    )
 
 
 # ─────────────────────────────────────────────
