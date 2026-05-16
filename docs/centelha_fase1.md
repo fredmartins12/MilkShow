@@ -127,6 +127,28 @@ Paralelamente, a graduação em Ciência de Dados e Inteligência Artificial pel
 
 ---
 
+---
+
+### Valdeir da Silva Martins — Conselheiro Técnico-Estratégico
+
+**Formação:**
+- Engenheiro Agrônomo — Universidade Federal de Lavras (UFLA)
+
+**Experiência e atuação:**
+- Ex-Secretário Municipal de Agricultura do município de Sebastião Laranjeiras — BA
+- Empresário rural: proprietário da Agrofilho, empresa do setor agropecuário
+- Fazendeiro e pecuarista em atividade, com vivência direta na gestão de propriedades rurais
+
+**Papel no projeto:** Conselheiro Técnico-Estratégico
+
+Valdeir da Silva Martins atua como conselheiro do MilkShow contribuindo com décadas de experiência acumulada nas dimensões técnica, institucional e empresarial do agronegócio brasileiro. Sua formação pela UFLA — uma das mais reconhecidas instituições de ensino agrícola do país — combinada com a experiência executiva como Secretário Municipal de Agricultura confere ao projeto acesso direto à visão de políticas públicas rurais e às reais demandas das comunidades produtoras.
+
+Como pecuarista e empresário rural em atividade, Valdeir exerce o papel de **validador do produto no campo**: testa funcionalidades, aponta lacunas da perspectiva do produtor real e orienta o desenvolvimento para que a solução seja genuinamente útil — não apenas tecnicamente sofisticada. Essa ponte entre o campo e o código é um dos principais diferenciais competitivos do MilkShow frente a concorrentes desenvolvidos exclusivamente por equipes de tecnologia sem vínculo com a realidade agropecuária.
+
+Sua rede de relacionamentos institucionais com órgãos municipais de agricultura, cooperativas e associações de produtores do interior da Bahia e do Nordeste representa ainda um ativo estratégico relevante para a fase de expansão do produto.
+
+---
+
 ### Contratações Previstas com Recurso do Centelha PB
 
 Com 50% do investimento (R$ 40.000) destinados à equipe de vendas, serão contratados:
