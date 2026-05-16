@@ -109,9 +109,13 @@ A equipe é formada atualmente pelo proponente-fundador, que reúne de forma sin
 
 **Por que este perfil é estratégico para o MilkShow:**
 
-Frederico une duas competências que raramente coexistem em uma única pessoa: o **conhecimento técnico do campo** e a **capacidade de construir tecnologia de ponta**. Sua formação como Técnico em Agropecuária pelo IFBaiano lhe confere compreensão profunda da realidade do produtor rural — as rotinas da ordenha, os desafios do controle sanitário, a linguagem e a cultura do campo. Essa vivência foi determinante para identificar que o problema central não é falta de ferramentas, mas sim ferramentas que não respeitam o contexto do produtor.
+Frederico une três dimensões que raramente coexistem em um único fundador: **vivência prática no campo desde a infância, formação técnica agropecuária formal e capacitação avançada em tecnologia**.
 
-Paralelamente, a graduação em Ciência de Dados e Inteligência Artificial pela UFPB — cursando o 7º período — provê o embasamento técnico necessário para construir a solução: modelos de linguagem natural para interpretação de mensagens, o modelo matemático de Wood para curva de lactação, análise de séries temporais de produção e arquitetura de sistemas distribuídos em nuvem.
+Criado na fazenda e no comércio agropecuário da família — a Agrofilho —, Frederico conviveu desde cedo com a rotina da ordenha, o controle de rebanho, as compras de insumos, a gestão de estoque e as decisões financeiras de uma propriedade rural real. Essa experiência prática antecedeu qualquer formação acadêmica e é o que confere ao produto autenticidade: cada funcionalidade do MilkShow foi concebida por alguém que já viveu o problema, não por um programador que apenas entrevistou produtores.
+
+A formação como Técnico em Agropecuária pelo Instituto Federal Baiano estruturou tecnicamente essa vivência, aprofundando o conhecimento em zootecnia, sanidade animal, nutrição de ruminantes e gestão de propriedades rurais. A graduação em Ciência de Dados e Inteligência Artificial pela UFPB — cursando o 7º período — provê o embasamento necessário para traduzir esse conhecimento de campo em tecnologia: modelos de linguagem natural para interpretação de mensagens, o modelo matemático de Wood para curva de lactação, análise de séries temporais de produção e arquitetura de sistemas distribuídos em nuvem.
+
+O resultado é um fundador que **fala a língua do produtor e escreve o código da solução** — sem intermediários, sem perda de contexto.
 
 **Realizações técnicas comprovadas no projeto:**
 
