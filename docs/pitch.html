@@ -1237,41 +1237,76 @@ body::before {
 <!-- ═══════════════════════════════════════════════════════ SLIDE 11 — EQUIPE -->
 <section class="slide" id="slide-11">
   <div class="slide-label animate-up">10 · Equipe</div>
-  <div class="slide-title animate-up">Fundadores com<br><span class="accent">Pele no Jogo</span></div>
-  <div class="slide-sub animate-up" style="margin-bottom:24px;">
-    Time técnico com experiência em produto, IA e agronegócio.
+  <div class="slide-title animate-up">Campo + Código.<br><span class="accent">Uma Combinação Rara</span></div>
+  <div class="slide-sub animate-up" style="margin-bottom:20px;">
+    Crescemos no campo. Construímos a tecnologia. Conhecemos o problema por dentro.
   </div>
   <div class="scrollable" style="flex:1">
-    <div class="grid-3 animate-up" style="gap:16px;margin-bottom:24px;">
-      <div class="team-card">
-        <div class="team-avatar">FM</div>
-        <div class="team-name">Fred Martins</div>
-        <div class="team-role">CEO · Co-Fundador</div>
-        <div class="team-bio">Product & engineering. Construiu o MilkShow do zero — bot, API, painel, infra. Visão de produto no campo.</div>
-      </div>
-      <div class="team-card" style="border-style:dashed;border-color:rgba(74,222,128,0.2);">
-        <div class="team-avatar" style="background:var(--surface2);border:1px dashed rgba(74,222,128,0.3);color:var(--text3);font-size:20px;">+</div>
-        <div class="team-name" style="color:var(--text2);">Head of Growth</div>
-        <div class="team-role" style="color:var(--text3);">Buscando · Q3 2026</div>
-        <div class="team-bio" style="color:var(--text3);">Background em vendas rural ou cooperativismo. Conhece o campo por dentro.</div>
-      </div>
-      <div class="team-card" style="border-style:dashed;border-color:rgba(34,211,238,0.2);">
-        <div class="team-avatar" style="background:var(--surface2);border:1px dashed rgba(34,211,238,0.3);color:var(--text3);font-size:20px;">+</div>
-        <div class="team-name" style="color:var(--text2);">CTO / Dev Sênior</div>
-        <div class="team-role" style="color:var(--text3);">Buscando · Q3 2026</div>
-        <div class="team-bio" style="color:var(--text3);">Full-stack Python + React. IA/ML para modelos preditivos de rebanho.</div>
-      </div>
-    </div>
-    <div class="card animate-up" style="padding:20px;">
-      <div style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:12px;">ADVISORS & PARCEIROS ESTRATÉGICOS BUSCADOS</div>
-      <div style="display:flex;flex-wrap:wrap;gap:8px;">
-        <span class="badge badge-green">Embrapa Gado de Leite</span>
-        <span class="badge badge-cyan">Cooperativa Leiteira Regional</span>
-        <span class="badge badge-amber">Médico Veterinário Parceiro</span>
-        <span class="badge badge-green">Associação de Produtores MG/PR</span>
-        <span class="badge badge-cyan">Agro Angel Investor</span>
+
+    <!-- Fundador -->
+    <div class="card animate-up" style="padding:20px 24px;margin-bottom:12px;background:rgba(22,163,74,0.04);border-color:rgba(74,222,128,0.2);">
+      <div style="display:flex;gap:20px;align-items:flex-start;">
+        <div>
+          <div class="team-avatar" style="width:56px;height:56px;font-size:18px;flex-shrink:0;">FM</div>
+        </div>
+        <div style="flex:1;">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
+            <div class="team-name" style="font-size:16px;">Frederico Botelho Martins</div>
+            <span class="badge badge-green">Fundador · CEO</span>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
+            <span class="badge badge-amber">Técnico em Agropecuária · IFBaiano</span>
+            <span class="badge badge-cyan">Bacharelando Ciência de Dados & IA · UFPB 7º período</span>
+          </div>
+          <div style="font-size:12px;color:var(--text2);line-height:1.7;">
+            Cresceu na fazenda e no comércio agropecuário da família. Sabe o que é acordar às 5h para a ordenha,
+            registrar produção no caderno e perder vaca por protocolo atrasado.
+            Construiu o MilkShow inteiramente sozinho — bot de IA, API, painel web, infraestrutura em produção —
+            unindo a linguagem do campo com Ciência de Dados.
+          </div>
+        </div>
       </div>
     </div>
+
+    <!-- Conselheiro -->
+    <div class="card animate-up" style="padding:20px 24px;margin-bottom:16px;">
+      <div style="display:flex;gap:20px;align-items:flex-start;">
+        <div>
+          <div class="team-avatar" style="width:56px;height:56px;font-size:18px;flex-shrink:0;background:linear-gradient(135deg,#0e6430,#22d3ee);">VM</div>
+        </div>
+        <div style="flex:1;">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
+            <div class="team-name" style="font-size:16px;">Valdeir da Silva Martins</div>
+            <span class="badge badge-cyan">Conselheiro Técnico-Estratégico</span>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+            <span class="badge badge-amber">Eng. Agrônomo · UFLA</span>
+            <span class="badge badge-green">Ex-Secretário Municipal de Agricultura · BA</span>
+            <span class="badge badge-cyan">Proprietário · Agrofilho</span>
+          </div>
+          <div style="font-size:12px;color:var(--text2);line-height:1.7;">
+            Fazendeiro e pecuarista em atividade. Valida cada funcionalidade do produto na perspectiva do
+            produtor real. Rede institucional com cooperativas, sindicatos rurais e órgãos de agricultura
+            do interior da Bahia e Nordeste. A ponte entre o produto e o campo.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Contratações -->
+    <div class="animate-up" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+      <div class="card" style="padding:14px 16px;border-style:dashed;border-color:rgba(74,222,128,0.25);">
+        <div style="font-size:10px;color:var(--green-l);font-family:'JetBrains Mono',monospace;letter-spacing:1px;margin-bottom:6px;">CONTRATAÇÃO · CENTELHA PB</div>
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;">Vendas Rural</div>
+        <div style="font-size:11px;color:var(--text2);">Inside sales agro — prospecção em cooperativas e laticínios da PB / NE. Prioridade para profissional paraibano.</div>
+      </div>
+      <div class="card" style="padding:14px 16px;border-style:dashed;border-color:rgba(34,211,238,0.25);">
+        <div style="font-size:10px;color:var(--cyan);font-family:'JetBrains Mono',monospace;letter-spacing:1px;margin-bottom:6px;">CONTRATAÇÃO · CENTELHA PB</div>
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;">Suporte ao Produtor</div>
+        <div style="font-size:11px;color:var(--text2);">Onboarding e atendimento via WhatsApp. Perfil: técnico agropecuário ou estudante de Zootecnia / Veterinária.</div>
+      </div>
+    </div>
+
   </div>
 </section>
 
