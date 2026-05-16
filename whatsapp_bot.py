@@ -2161,6 +2161,8 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
         return _relatorio_manha(fazenda_id)
     if lower in ("ranking", "rentabilidade", "/ranking"):
         return _gerar_ranking_rentabilidade(fazenda_id)
+    if lower in ("agenda", "semana", "tarefas", "/agenda"):
+        return _formatar_agenda_whatsapp(fazenda_id)
     # Pausar: "pausar 2h" / "pausar 30min"
     _m_pausar = re.match(r'^pausar\s+(\d+)\s*(h|hora|horas|min|minutos?)?$', lower)
     if _m_pausar or lower in ("pausar", "silencio", "silêncio", "nao perturbe", "não perturbe"):
@@ -2575,6 +2577,56 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str, registrado_por: str = "Bot 
 
         _estoque_entrada(prod, qtd, un, val)
 
+        # Ração: salva lote com custo histórico e alerta mudança de preço
+        if cat == "Ração / Nutrição":
+            _KG_POR_UN = {
+                "kg": 1.0, "kilo": 1.0, "quilos": 1.0, "quilo": 1.0,
+                "sc": 30.0, "saco": 30.0, "sacos": 30.0,
+                "t": 1000.0, "ton": 1000.0, "tonelada": 1000.0,
+                "g": 0.001, "gr": 0.001,
+            }
+            fator_kg    = _KG_POR_UN.get(un.lower(), 1.0)
+            qtd_kg      = qtd * fator_kg
+            custo_kg    = val / qtd_kg if qtd_kg > 0 else val / qtd
+            # Busca lote anterior para alertar variação
+            try:
+                lotes_ant = list(_coll(fazenda_id, "lotes_racao")
+                                 .where(filter=FieldFilter("data", "<", str(data_compra)))
+                                 .stream())
+                if lotes_ant:
+                    lotes_ant.sort(key=lambda d: d.to_dict().get("data",""), reverse=True)
+                    custo_ant = float(lotes_ant[0].to_dict().get("custo_unit_kg", 0))
+                    if custo_ant > 0:
+                        variacao_pct = (custo_kg - custo_ant) / custo_ant * 100
+                        if abs(variacao_pct) >= 8:
+                            sinal = "📈" if variacao_pct > 0 else "📉"
+                            alerta_racao = (
+                                f"\n{sinal} Preço da ração mudou "
+                                f"R${custo_ant:.2f}→R${custo_kg:.2f}/kg "
+                                f"({variacao_pct:+.0f}%)"
+                            )
+                        else:
+                            alerta_racao = ""
+                    else:
+                        alerta_racao = ""
+                else:
+                    alerta_racao = ""
+            except Exception:
+                alerta_racao = ""
+            _coll(fazenda_id, "lotes_racao").add({
+                "produto":      prod,
+                "qtd_original": qtd_kg,
+                "custo_unit_kg": round(custo_kg, 4),
+                "custo_total":  val,
+                "unidade_orig": un,
+                "qtd_orig_un":  qtd,
+                "data":         str(data_compra),
+                "fornecedor":   forn,
+                "ts":           datetime.datetime.now().isoformat(),
+            })
+        else:
+            alerta_racao = ""
+
         desc = f"Compra {prod} ({qtd:.1f} {un})"
         if forn:
             desc += f" — {forn}"
@@ -2582,7 +2634,7 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str, registrado_por: str = "Bot 
 
         return (f"*Salvo!*\n"
                 f"{prod} ({qtd:.1f} {un}) registrado no Armazém.\n"
-                f"R$ {val:.2f} lancado em {cat}.")
+                f"R$ {val:.2f} lancado em {cat}.{alerta_racao}")
 
     # ── GASTO_SANITARIO ───────────────────────
     elif tipo == "GASTO_SANITARIO":
@@ -3486,6 +3538,25 @@ def _gerar_relatorio_semanal(fazenda_id: str) -> str:
     except Exception:
         pass
 
+    # Agenda dos próximos 7 dias
+    try:
+        agenda = _agenda_proximos_dias(fazenda_id, dias=7)
+        hoje_l = datetime.date.today()
+        linhas.append("\n*📅 Agenda da semana:*")
+        tem_agenda = False
+        for i in range(7):
+            data = hoje_l + datetime.timedelta(days=i)
+            tasks = agenda.get(str(data), [])
+            if tasks:
+                tem_agenda = True
+                linhas.append(f"  *{_DIAS_PT[data.weekday()]} {data.strftime('%d/%m')}:*")
+                for t in tasks:
+                    linhas.append(f"    • {t}")
+        if not tem_agenda:
+            linhas.append("  ✅ Nenhuma tarefa crítica esta semana.")
+    except Exception:
+        pass
+
     linhas.append("\nBoa semana! 🌾")
     return "\n".join(linhas)
 
@@ -3538,6 +3609,18 @@ def _gerar_alertas_proativos(fazenda_id: str) -> list:
                         alertas.append(f"SECAR HOJE: {nome} — parto previsto em {DIAS_SECAR} dias ({prev.isoformat()})")
                     if (prev - hoje).days in (7, 3, 1):
                         alertas.append(f"Parto próximo: {nome} previsto em {(prev-hoje).days} dia(s) ({prev.isoformat()}) — prepare o local!")
+    except Exception:
+        pass
+
+    try:
+        # Queda acelerada de lactação (vs curva de Wood)
+        quedas = _detectar_queda_lactacao(fazenda_id)
+        for q in quedas:
+            alertas.append(
+                f"📉 Queda acelerada: *{q['nome']}* — {q['media_real']:.0f} L/dia "
+                f"(esperado {q['esperado']:.0f} L, queda {q['queda_pct']:.0f}%) "
+                f"DIM {q['dim']}d — candidata a secar antes?"
+            )
     except Exception:
         pass
 
@@ -3924,6 +4007,194 @@ def _gerar_ranking_rentabilidade(fazenda_id: str, dias: int = 30) -> str:
 
 
 # ─────────────────────────────────────────────
+# CURVA DE LACTAÇÃO — modelo de Wood
+# ─────────────────────────────────────────────
+import math as _math
+
+def _wood_curve(dim: int, a: float = 20.0, b: float = 0.12, c: float = 0.0035) -> float:
+    """Produção esperada (L/dia) pelo modelo de Wood para um dado DIM.
+    Valores padrão calibrados para bovinos leiteiros zebuínos/cruzados brasileiros.
+    DIM = days in milk (dias desde o parto)."""
+    if dim <= 0:
+        return 0.0
+    return a * (dim ** b) * _math.exp(-c * dim)
+
+
+def _dim_pico(b: float = 0.12, c: float = 0.0035) -> int:
+    """Dia do pico de produção na curva de Wood: DIM_pico = b/c."""
+    return int(b / c)
+
+
+def _escalar_curva(dim_atual: int, media_real_7d: float,
+                   a=20.0, b=0.12, c=0.0035) -> float:
+    """Fator de escala para ajustar a curva à vaca real (se temos produção conhecida)."""
+    esperado = _wood_curve(dim_atual, a, b, c)
+    if esperado > 0 and media_real_7d > 0:
+        return media_real_7d / esperado
+    return 1.0
+
+
+def _detectar_queda_lactacao(fazenda_id: str) -> list:
+    """Detecta vacas em queda acelerada vs curva de lactação padrão.
+    Retorna lista de dicts: {nome, dim, media_real, esperado, queda_pct}."""
+    hoje     = datetime.date.today()
+    alertas  = []
+    JANELA   = 7   # dias de média real
+    LIMIAR   = 60  # % do esperado abaixo do qual emite alerta (< 60%)
+
+    try:
+        animais = [d.to_dict() for d in _coll(fazenda_id, "animais").stream()
+                   if d.to_dict().get("status") == "Lactação"]
+        ini_prod = (hoje - datetime.timedelta(days=JANELA)).isoformat()
+        prods    = [d.to_dict() for d in _coll(fazenda_id, "producao")
+                    .where(filter=FieldFilter("data", ">=", ini_prod)).stream()]
+
+        for a in animais:
+            nome = a.get("nome", "?")
+            # Precisa de dt_parto para calcular DIM
+            dt_parto_raw = a.get("dt_parto") or a.get("parto")
+            if not dt_parto_raw:
+                continue
+            try:
+                dt_parto = datetime.datetime.strptime(str(dt_parto_raw)[:10], "%Y-%m-%d").date()
+            except Exception:
+                continue
+            dim = (hoje - dt_parto).days
+            if dim < 30:
+                continue  # ainda no início, variação normal
+
+            # Produção média real nos últimos JANELA dias
+            prod_ani = [p.get("leite", 0) for p in prods
+                        if p.get("nome_animal") == nome]
+            if len(prod_ani) < 3:
+                continue  # poucos dados
+            media_real = sum(prod_ani) / len(prod_ani)
+
+            # Escala curva pela média do pico (dias 20-50)
+            esperado_raw = _wood_curve(dim)
+            # Fator de escala baseado na mediana do rebanho (simplificado — usa 1x)
+            fator = _escalar_curva(max(30, dim), media_real)
+            esperado = _wood_curve(dim) * fator if fator < 0.9 else _wood_curve(dim)
+
+            if esperado > 0:
+                queda_pct = (1 - media_real / esperado) * 100
+                if queda_pct >= 35 and dim > 60:  # queda > 35% do esperado após pico
+                    alertas.append({
+                        "nome":       nome,
+                        "dim":        dim,
+                        "media_real": round(media_real, 1),
+                        "esperado":   round(esperado, 1),
+                        "queda_pct":  round(queda_pct, 0),
+                    })
+    except Exception as e:
+        log.warning(f"_detectar_queda_lactacao: {e}")
+    return alertas
+
+
+# ─────────────────────────────────────────────
+# AGENDA DA SEMANA (próximos 7 dias)
+# ─────────────────────────────────────────────
+_DIAS_PT = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+
+def _agenda_proximos_dias(fazenda_id: str, dias: int = 7) -> dict:
+    """Retorna dict {data_iso: [tasks_str]} para os próximos N dias."""
+    hoje     = datetime.date.today()
+    agenda   = {str(hoje + datetime.timedelta(days=i)): [] for i in range(dias)}
+
+    GESTACAO   = 283
+    DIAS_SECAR = 60
+    DIAS_DIAGN = 30
+    DIAS_PVE   = 45
+
+    def _pd(s):
+        try:
+            return datetime.datetime.strptime(str(s)[:10], "%Y-%m-%d").date() if s else None
+        except Exception:
+            return None
+
+    try:
+        animais = [d.to_dict() for d in _coll(fazenda_id, "animais").stream()]
+        for a in animais:
+            nome     = a.get("nome", "?")
+            status   = a.get("status", "")
+            d_insem  = _pd(a.get("dt_insem"))
+            d_parto  = _pd(a.get("dt_parto"))
+
+            if status != "Lactação":
+                continue
+
+            # Diagnóstico de prenhez (30 dias pós inseminação)
+            if d_insem and not a.get("prenhez"):
+                data_diagn = d_insem + datetime.timedelta(days=DIAS_DIAGN)
+                if str(data_diagn) in agenda:
+                    agenda[str(data_diagn)].append(f"🔬 Diagnóstico prenhez: *{nome}*")
+
+            # Inseminação atrasada (> DIAS_PVE sem inseminar após parto)
+            if not d_insem and d_parto:
+                data_pve = d_parto + datetime.timedelta(days=DIAS_PVE + 1)
+                if str(data_pve) in agenda:
+                    agenda[str(data_pve)].append(f"💉 Inseminar (atrasada): *{nome}*")
+
+            # Secar (60 dias antes do parto previsto)
+            if a.get("prenhez") and d_insem:
+                prev  = d_insem + datetime.timedelta(days=GESTACAO)
+                d_sec = prev - datetime.timedelta(days=DIAS_SECAR)
+                if str(d_sec) in agenda:
+                    agenda[str(d_sec)].append(f"🛑 Secar hoje: *{nome}*")
+                # Alerta pré-parto (7 dias)
+                for dd in range(1, 8):
+                    data_alerta = prev - datetime.timedelta(days=dd)
+                    if str(data_alerta) in agenda:
+                        agenda[str(data_alerta)].append(
+                            f"🐄 Parto em {dd}d: *{nome}* ({prev.strftime('%d/%m')})"
+                        )
+    except Exception:
+        pass
+
+    try:
+        # Protocolos sanitários com data prevista
+        protos = [d.to_dict() for d in _coll(fazenda_id, "protocolos_sanitarios").stream()]
+        for p in protos:
+            if not p.get("ativo", True):
+                continue
+            prox = _pd(p.get("proxima_data"))
+            if prox and str(prox) in agenda:
+                agenda[str(prox)].append(
+                    f"📋 Protocolo: *{p.get('nome','Sanitário')}*"
+                    + (f" — {p.get('animal','')}" if p.get("animal") else "")
+                )
+    except Exception:
+        pass
+
+    return agenda
+
+
+def _formatar_agenda_whatsapp(fazenda_id: str) -> str:
+    """Retorna texto formatado da agenda dos próximos 7 dias para WhatsApp."""
+    hoje   = datetime.date.today()
+    agenda = _agenda_proximos_dias(fazenda_id, dias=7)
+    fim    = hoje + datetime.timedelta(days=6)
+    linhas = [f"📅 *Agenda da Semana*\n{hoje.strftime('%d/%m')} a {fim.strftime('%d/%m/%Y')}\n"]
+
+    tem_alguma = False
+    for i in range(7):
+        data = hoje + datetime.timedelta(days=i)
+        tasks = agenda.get(str(data), [])
+        if tasks:
+            tem_alguma = True
+            dia_str = f"*{_DIAS_PT[data.weekday()]} {data.strftime('%d/%m')}*"
+            linhas.append(dia_str)
+            for t in tasks:
+                linhas.append(f"  • {t}")
+            linhas.append("")
+
+    if not tem_alguma:
+        linhas.append("✅ Nenhuma tarefa crítica nos próximos 7 dias.")
+
+    return "\n".join(linhas)
+
+
+# ─────────────────────────────────────────────
 # BACKUP SEMANAL (Firestore → JSON local)
 # ─────────────────────────────────────────────
 def _backup_fazenda(fazenda_id: str) -> bool:
@@ -4030,7 +4301,7 @@ async def _loop_agendador():
                         msg = "*⚠️ Alertas MilkShow:*\n" + "\n".join(f"• {a}" for a in alertas)
                         _enviar_whatsapp(tel, msg)
 
-                    # Relatório semanal toda segunda-feira
+                    # Relatório semanal toda segunda-feira (inclui agenda na função)
                     if segunda and eh_6h:
                         rel = _gerar_relatorio_semanal(fazenda_id)
                         _enviar_whatsapp(tel, rel)

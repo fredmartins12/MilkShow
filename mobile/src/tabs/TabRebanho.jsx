@@ -10,7 +10,10 @@ import {
   Search, X, RefreshCw, Trash2, Pencil, Check, Plus,
   Milk, CalendarDays, Clock, TrendingUp, ShieldCheck, ChevronRight,
 } from 'lucide-react'
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
+import {
+  ComposedChart, AreaChart, Area, Line,
+  XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
+} from 'recharts'
 import { api } from '../api.js'
 import {
   Loading, ErrorMsg, Toast, Modal, SectionHeader,
@@ -67,19 +70,37 @@ function AnimalPanel({ animal, onClose, onSaved, onDelete, sanitario }) {
     setEditMode(!animal.id)
   }, [animal])
 
+  const [lacInfo, setLacInfo] = useState(null)
+
   useEffect(() => {
     setLoadProd(true)
-    api.producaoPorAnimal(animal.nome, 30)
-      .then(p => {
-        const porDia = {}
-        p.forEach(r => { porDia[r.data] = (porDia[r.data] || 0) + (r.leite || 0) })
+    setLacInfo(null)
+    api.lactacao(animal.nome, 120)
+      .then(data => {
+        setLacInfo(data)
         setProd(
-          Object.entries(porDia)
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([d, l]) => ({ dia: d.slice(5), litros: +l.toFixed(1) }))
+          (data.serie || []).map(r => ({
+            dia:      r.data?.slice(5) || '',
+            dim:      r.dim,
+            litros:   r.litros != null ? +r.litros.toFixed(1) : null,
+            esperado: r.esperado != null ? +r.esperado.toFixed(1) : null,
+          }))
         )
       })
-      .catch(() => setProd([]))
+      .catch(() => {
+        // fallback to simple 30-day view
+        api.producaoPorAnimal(animal.nome, 30)
+          .then(p => {
+            const porDia = {}
+            p.forEach(r => { porDia[r.data] = (porDia[r.data] || 0) + (r.leite || 0) })
+            setProd(
+              Object.entries(porDia)
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([d, l]) => ({ dia: d.slice(5), litros: +l.toFixed(1), esperado: null }))
+            )
+          })
+          .catch(() => setProd([]))
+      })
       .finally(() => setLoadProd(false))
   }, [animal.nome])
 
@@ -249,56 +270,98 @@ function AnimalPanel({ animal, onClose, onSaved, onDelete, sanitario }) {
             </section>
           )}
 
-          {/* Produção 30 dias */}
+          {/* Curva de Lactação */}
           {!editMode && (
             <section>
               <div className="flex items-center justify-between mb-3">
-                <p className="text-[11px] font-mono uppercase tracking-widest text-slate-500">Produção — 30 dias</p>
-                {!loadProd && prod.length > 0 && (
+                <p className="text-[11px] font-mono uppercase tracking-widest text-slate-500">Curva de Lactação</p>
+                {!loadProd && lacInfo && (
                   <div className="flex items-center gap-3 text-[11px] font-mono">
-                    <span className="text-slate-600">Total: <span className="text-slate-300">{totalProd.toFixed(0)} L</span></span>
-                    <span className="text-slate-600">Média: <span className="text-emerald-400">{mediaProd} L/dia</span></span>
+                    {lacInfo.dim_atual != null && (
+                      <span className="text-slate-600">DIM <span className="text-slate-300 tabular-nums">{lacInfo.dim_atual}d</span></span>
+                    )}
+                    {lacInfo.media_7d != null && (
+                      <span className="text-slate-600">Média 7d <span className="text-emerald-400 tabular-nums">{lacInfo.media_7d.toFixed(1)} L</span></span>
+                    )}
                   </div>
                 )}
               </div>
+
+              {/* Alerta de queda acelerada */}
+              {!loadProd && lacInfo?.queda_pct != null && lacInfo.queda_pct >= 35 && (
+                <div className="mb-3 px-3 py-2 rounded-lg text-[11px] font-mono flex items-center gap-2"
+                     style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171' }}>
+                  <span>⚠</span>
+                  <span>Queda acelerada: {lacInfo.queda_pct.toFixed(0)}% abaixo da curva esperada — candidata a secar</span>
+                </div>
+              )}
+
               {loadProd ? (
-                <div className="h-[100px] flex items-center justify-center">
+                <div className="h-[130px] flex items-center justify-center">
                   <span className="text-slate-700 text-xs font-mono animate-pulse">carregando...</span>
                 </div>
               ) : prod.length === 0 ? (
-                <div className="h-[100px] flex items-center justify-center rounded-lg"
+                <div className="h-[130px] flex items-center justify-center rounded-lg"
                      style={{ background: T.surface, border: `1px solid ${T.border}` }}>
                   <span className="text-slate-700 text-xs font-mono">sem registros de produção</span>
                 </div>
               ) : (
                 <div className="rounded-lg overflow-hidden"
                      style={{ background: T.surface, border: `1px solid ${T.border}` }}>
-                  <ResponsiveContainer width="100%" height={110}>
-                    <AreaChart data={prod} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
+                  <ResponsiveContainer width="100%" height={140}>
+                    <ComposedChart data={prod} margin={{ top: 8, right: 8, bottom: 0, left: -20 }}>
                       <defs>
                         <linearGradient id="gAnimal" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%"   stopColor="#16a34a" stopOpacity={0.2} />
+                          <stop offset="0%"   stopColor="#16a34a" stopOpacity={0.25} />
                           <stop offset="100%" stopColor="#16a34a" stopOpacity={0} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 5" stroke="#1a2640" />
-                      <XAxis dataKey="dia" tick={tickStyle} />
+                      <XAxis dataKey="dia" tick={tickStyle} interval="preserveStartEnd" />
                       <YAxis tick={tickStyle} unit="L" />
                       <Tooltip
-                        content={({ active, payload }) => {
+                        content={({ active, payload, label }) => {
                           if (!active || !payload?.length) return null
+                          const real = payload.find(p => p.dataKey === 'litros')
+                          const esp  = payload.find(p => p.dataKey === 'esperado')
+                          const dim  = payload[0]?.payload?.dim
                           return (
                             <div style={{ background: '#0f172a', border: `1px solid ${T.border}` }}
-                                 className="rounded px-2.5 py-1.5 text-[11px] font-mono">
-                              <span className="text-emerald-400 font-semibold tabular-nums">{payload[0]?.value?.toFixed(1)} L</span>
+                                 className="rounded px-2.5 py-1.5 text-[11px] font-mono space-y-0.5">
+                              <div className="text-slate-500">{label}{dim != null ? ` · DIM ${dim}` : ''}</div>
+                              {real?.value != null && (
+                                <div className="text-emerald-400">Real: <span className="tabular-nums">{real.value.toFixed(1)} L</span></div>
+                              )}
+                              {esp?.value != null && (
+                                <div className="text-amber-400">Esperado: <span className="tabular-nums">{esp.value.toFixed(1)} L</span></div>
+                              )}
                             </div>
                           )
                         }}
                       />
-                      <Area type="monotone" dataKey="litros" stroke="#16a34a" strokeWidth={1.5}
-                            fill="url(#gAnimal)" dot={false} />
-                    </AreaChart>
+                      <Area type="monotone" dataKey="litros" name="Real"
+                            stroke="#16a34a" strokeWidth={1.5} fill="url(#gAnimal)"
+                            dot={false} connectNulls={false} />
+                      {prod.some(p => p.esperado != null) && (
+                        <Line type="monotone" dataKey="esperado" name="Esperado (Wood)"
+                              stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="5 3"
+                              dot={false} connectNulls />
+                      )}
+                    </ComposedChart>
                   </ResponsiveContainer>
+                  <div className="flex items-center gap-4 px-4 pb-2.5 pt-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-4 h-px inline-block" style={{ background: '#16a34a', display: 'inline-block', verticalAlign: 'middle' }} />
+                      <span className="text-[10px] font-mono text-slate-600">Real</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <svg width="16" height="2" className="inline-block" style={{ verticalAlign: 'middle' }}>
+                        <line x1="0" y1="1" x2="5" y2="1" stroke="#f59e0b" strokeWidth="1.5" />
+                        <line x1="8" y1="1" x2="13" y2="1" stroke="#f59e0b" strokeWidth="1.5" />
+                      </svg>
+                      <span className="text-[10px] font-mono text-slate-600">Esperado (Wood)</span>
+                    </div>
+                  </div>
                 </div>
               )}
             </section>

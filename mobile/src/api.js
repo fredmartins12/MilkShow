@@ -63,6 +63,15 @@ export const api = {
   config:               ()               => req('GET',  '/config'),
   salvarConfig:         (body)           => req('POST', '/config',           body),
 
+  // Curva de lactação por animal
+  lactacao:             (nome, dias=120) => req('GET',  `/lactacao/${encodeURIComponent(nome)}?dias=${dias}`),
+
+  // Lotes de ração
+  lotesRacao:           ()               => req('GET',  '/lotes_racao'),
+
+  // Agenda semanal
+  agenda:               (dias = 7)       => req('GET',  `/agenda?dias=${dias}`),
+
   // Ranking de rentabilidade
   ranking:              (dias = 30)      => req('GET',  `/ranking?dias=${dias}`),
 

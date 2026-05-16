@@ -720,6 +720,200 @@ async def eventos_sse(token: str = Query(default="")):
 
 
 # ─────────────────────────────────────────────
+# LOTES DE RAÇÃO (histórico de preços)
+# ─────────────────────────────────────────────
+@mobile_router.get("/lotes_racao")
+def listar_lotes_racao(user=Depends(_get_user)):
+    """Retorna histórico de lotes de ração com variação de preço."""
+    fid  = user["fazenda_id"]
+    docs = [d.to_dict() for d in _coll(fid, "lotes_racao").stream()]
+    docs.sort(key=lambda x: x.get("data", ""), reverse=True)
+    resultado = []
+    for i, d in enumerate(docs):
+        preco_ant = docs[i + 1].get("custo_unit_kg", 0) if i + 1 < len(docs) else None
+        preco_atu = float(d.get("custo_unit_kg", 0))
+        variacao  = None
+        if preco_ant and preco_ant > 0:
+            variacao = round((preco_atu - preco_ant) / preco_ant * 100, 1)
+        resultado.append({
+            "data":          d.get("data"),
+            "produto":       d.get("produto"),
+            "qtd_kg":        d.get("qtd_original"),
+            "custo_unit_kg": preco_atu,
+            "custo_total":   d.get("custo_total"),
+            "fornecedor":    d.get("fornecedor"),
+            "variacao_pct":  variacao,
+        })
+    return resultado
+
+
+# ─────────────────────────────────────────────
+# CURVA DE LACTAÇÃO POR ANIMAL
+# ─────────────────────────────────────────────
+import math as _math
+
+def _wood(dim: int, a=20.0, b=0.12, c=0.0035) -> float:
+    if dim <= 0: return 0.0
+    return a * (dim ** b) * _math.exp(-c * dim)
+
+
+@mobile_router.get("/lactacao/{nome}")
+def curva_lactacao(nome: str, dias: int = 120, user=Depends(_get_user)):
+    """Retorna produção real + curva de Wood padrão para um animal.
+    Permite plotar curva esperada vs real no frontend."""
+    fid  = user["fazenda_id"]
+    hoje = datetime.date.today()
+    ini  = (hoje - datetime.timedelta(days=dias)).isoformat()
+
+    # Busca animal para obter dt_parto
+    animais = [d.to_dict() for d in _coll(fid, "animais").stream()
+               if d.to_dict().get("nome") == nome]
+    animal  = animais[0] if animais else {}
+    dt_parto_raw = animal.get("dt_parto") or animal.get("parto")
+    dt_parto = None
+    if dt_parto_raw:
+        try:
+            dt_parto = datetime.datetime.strptime(str(dt_parto_raw)[:10], "%Y-%m-%d").date()
+        except Exception:
+            pass
+
+    # Produção real por dia
+    docs = [d.to_dict() for d in
+            _coll(fid, "producao")
+            .where(filter=FieldFilter("data", ">=", ini)).stream()]
+    filtrado = [d for d in docs if d.get("nome_animal") == nome]
+    por_dia  = {}
+    for p in filtrado:
+        d_  = p.get("data", "")
+        por_dia[d_] = por_dia.get(d_, 0) + float(p.get("leite") or 0)
+    real_sorted = sorted(por_dia.items())
+
+    # Fator de escala: ajusta curva ao pico real
+    fator = 1.0
+    if real_sorted:
+        pico_real = max(v for _, v in real_sorted)
+        pico_wood = _wood(_math.floor(0.12 / 0.0035))  # ~34
+        if pico_wood > 0 and pico_real > 0:
+            fator = pico_real / pico_wood
+
+    # Constrói série com curva e real
+    series = []
+    for data_str, litros_real in real_sorted:
+        dim = None
+        esperado = None
+        if dt_parto:
+            try:
+                d_obj = datetime.datetime.strptime(data_str, "%Y-%m-%d").date()
+                dim   = (d_obj - dt_parto).days
+                if dim > 0:
+                    esperado = round(_wood(dim) * fator, 1)
+            except Exception:
+                pass
+        series.append({
+            "data":    data_str,
+            "dia":     data_str[5:],
+            "litros":  round(litros_real, 1),
+            "esperado": esperado,
+            "dim":     dim,
+        })
+
+    dim_atual = (hoje - dt_parto).days if dt_parto else None
+    media_7d  = None
+    if real_sorted:
+        ultimos  = [v for _, v in real_sorted[-7:]]
+        media_7d = round(sum(ultimos) / len(ultimos), 1) if ultimos else None
+
+    queda_pct = None
+    if dim_atual and media_7d and dim_atual > 60:
+        esperado_atual = _wood(dim_atual) * fator
+        if esperado_atual > 0:
+            queda_pct = round((1 - media_7d / esperado_atual) * 100, 1)
+
+    return {
+        "animal":     nome,
+        "dt_parto":   str(dt_parto) if dt_parto else None,
+        "dim_atual":  dim_atual,
+        "media_7d":   media_7d,
+        "queda_pct":  queda_pct,
+        "fator_escala": round(fator, 3),
+        "serie":      series,
+    }
+
+
+# ─────────────────────────────────────────────
+# AGENDA DOS PRÓXIMOS DIAS
+# ─────────────────────────────────────────────
+@mobile_router.get("/agenda")
+def agenda_semana(dias: int = 7, user=Depends(_get_user)):
+    """Retorna tarefas dos próximos N dias agrupadas por data."""
+    fid  = user["fazenda_id"]
+    hoje = datetime.date.today()
+
+    GESTACAO   = 283
+    DIAS_SECAR = 60
+    DIAS_DIAGN = 30
+    DIAS_PVE   = 45
+    DIAS_PT    = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+
+    agenda: dict = {str(hoje + datetime.timedelta(days=i)): [] for i in range(dias)}
+
+    def _pd(s):
+        try:
+            return datetime.datetime.strptime(str(s)[:10], "%Y-%m-%d").date() if s else None
+        except Exception:
+            return None
+
+    try:
+        animais = [d.to_dict() for d in _coll(fid, "animais").stream()]
+        for a in animais:
+            nome    = a.get("nome", "?")
+            status  = a.get("status", "")
+            d_insem = _pd(a.get("dt_insem"))
+            d_parto = _pd(a.get("dt_parto"))
+            if status != "Lactação":
+                continue
+            if d_insem and not a.get("prenhez"):
+                data_d = d_insem + datetime.timedelta(days=DIAS_DIAGN)
+                if str(data_d) in agenda:
+                    agenda[str(data_d)].append({"tipo": "diagnostico", "animal": nome, "texto": f"Diagnóstico prenhez: {nome}"})
+            if not d_insem and d_parto:
+                data_p = d_parto + datetime.timedelta(days=DIAS_PVE + 1)
+                if str(data_p) in agenda:
+                    agenda[str(data_p)].append({"tipo": "inseminacao", "animal": nome, "texto": f"Inseminar (atrasada): {nome}"})
+            if a.get("prenhez") and d_insem:
+                prev  = d_insem + datetime.timedelta(days=GESTACAO)
+                d_sec = prev - datetime.timedelta(days=DIAS_SECAR)
+                if str(d_sec) in agenda:
+                    agenda[str(d_sec)].append({"tipo": "secar", "animal": nome, "texto": f"Secar hoje: {nome}"})
+                for dd in range(1, 8):
+                    data_a = prev - datetime.timedelta(days=dd)
+                    if str(data_a) in agenda:
+                        agenda[str(data_a)].append({"tipo": "parto", "animal": nome, "texto": f"Parto em {dd}d: {nome}"})
+    except Exception:
+        pass
+
+    try:
+        protos = [d.to_dict() for d in _coll(fid, "protocolos_sanitarios").stream()
+                  if d.to_dict().get("ativo", True)]
+        for p in protos:
+            prox = _pd(p.get("proxima_data"))
+            if prox and str(prox) in agenda:
+                agenda[str(prox)].append({"tipo": "sanitario", "animal": p.get("animal",""), "texto": f"Protocolo: {p.get('nome','')}"})
+    except Exception:
+        pass
+
+    resultado = []
+    for i in range(dias):
+        data = hoje + datetime.timedelta(days=i)
+        resultado.append({
+            "data":     str(data),
+            "dia_semana": DIAS_PT[data.weekday()],
+            "tarefas":  agenda.get(str(data), []),
+        })
+    return resultado
+
+
+# ─────────────────────────────────────────────
 # PRODUÇÃO — por animal (relatório)
 # ─────────────────────────────────────────────
 @mobile_router.get("/producao/animal/{nome}")
