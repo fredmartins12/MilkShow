@@ -3765,21 +3765,26 @@ async def webhook_evolution(request: Request):
                     "Ignore rasuras. Responda somente os dados."
                 )
                 texto_img = ""
-                # Tenta Gemini Vision primeiro (gratuito)
+                # Tenta Gemini Vision via REST direto (sem biblioteca, evita bugs de versão)
                 google_key = os.environ.get("GOOGLE_API_KEY", "")
                 if google_key:
-                    try:
-                        import google.generativeai as genai
-                        genai.configure(api_key=google_key)
-                        gmodel = genai.GenerativeModel("gemini-1.5-flash")
-                        import PIL.Image as PILImage
-                        import io
-                        pil_img = PILImage.open(io.BytesIO(img_bytes))
-                        gresp = gmodel.generate_content([_VISION_PROMPT, pil_img])
-                        texto_img = gresp.text.strip()
-                        log.info(f"[Evolution] Gemini Vision extraiu: {texto_img[:200]}")
-                    except Exception as eg:
-                        log.warning(f"Gemini Vision falhou: {eg}")
+                    for _gmodel in ("gemini-2.0-flash", "gemini-1.5-flash"):
+                        try:
+                            async with httpx.AsyncClient(timeout=30) as gc:
+                                gr = await gc.post(
+                                    f"https://generativelanguage.googleapis.com/v1/models/{_gmodel}:generateContent",
+                                    params={"key": google_key},
+                                    json={"contents": [{"parts": [
+                                        {"inline_data": {"mime_type": "image/jpeg", "data": b64_str}},
+                                        {"text": _VISION_PROMPT},
+                                    ]}]},
+                                )
+                            gdata = gr.json()
+                            texto_img = gdata["candidates"][0]["content"]["parts"][0]["text"].strip()
+                            log.info(f"[Evolution] Gemini Vision ({_gmodel}) extraiu: {texto_img[:200]}")
+                            break
+                        except Exception as eg:
+                            log.warning(f"Gemini Vision ({_gmodel}) falhou: {eg}")
                 # Fallback Claude Vision
                 if not texto_img:
                     anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
