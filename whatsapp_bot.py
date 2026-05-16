@@ -3765,23 +3765,34 @@ async def webhook_evolution(request: Request):
                     "Ignore rasuras. Responda somente os dados."
                 )
                 texto_img = ""
-                # Tenta Gemini Vision via REST direto (sem biblioteca, evita bugs de versão)
+                # Tenta Gemini Vision via REST direto
                 google_key = os.environ.get("GOOGLE_API_KEY", "")
                 if google_key:
-                    for _gmodel in ("gemini-2.0-flash", "gemini-1.5-flash"):
+                    _candidates = [
+                        ("v1",     "gemini-2.0-flash"),
+                        ("v1beta", "gemini-1.5-flash"),
+                        ("v1beta", "gemini-2.0-flash"),
+                    ]
+                    for _api_ver, _gmodel in _candidates:
                         try:
                             async with httpx.AsyncClient(timeout=30) as gc:
                                 gr = await gc.post(
-                                    f"https://generativelanguage.googleapis.com/v1/models/{_gmodel}:generateContent",
+                                    f"https://generativelanguage.googleapis.com/{_api_ver}/models/{_gmodel}:generateContent",
                                     params={"key": google_key},
                                     json={"contents": [{"parts": [
                                         {"inline_data": {"mime_type": "image/jpeg", "data": b64_str}},
                                         {"text": _VISION_PROMPT},
                                     ]}]},
                                 )
+                            if gr.status_code == 429:
+                                log.warning(f"Gemini Vision ({_gmodel}) rate limit (429) — tentando próximo")
+                                continue
+                            if gr.status_code not in (200, 201):
+                                log.warning(f"Gemini Vision ({_gmodel}) HTTP {gr.status_code} — tentando próximo")
+                                continue
                             gdata = gr.json()
                             texto_img = gdata["candidates"][0]["content"]["parts"][0]["text"].strip()
-                            log.info(f"[Evolution] Gemini Vision ({_gmodel}) extraiu: {texto_img[:200]}")
+                            log.info(f"[Evolution] Gemini Vision ({_api_ver}/{_gmodel}) extraiu: {texto_img[:200]}")
                             break
                         except Exception as eg:
                             log.warning(f"Gemini Vision ({_gmodel}) falhou: {eg}")
