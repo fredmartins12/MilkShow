@@ -3767,11 +3767,12 @@ async def webhook_evolution(request: Request):
                 )
                 texto_img = ""
                 # Tenta Gemini Vision via REST direto
+                import asyncio as _aio_vis
                 google_key = os.environ.get("GOOGLE_API_KEY", "")
                 if google_key:
                     _candidates = [
+                        ("v1",     "gemini-2.0-flash-lite"),
                         ("v1",     "gemini-2.0-flash"),
-                        ("v1beta", "gemini-1.5-flash"),
                         ("v1beta", "gemini-2.0-flash"),
                     ]
                     for _api_ver, _gmodel in _candidates:
@@ -3786,8 +3787,18 @@ async def webhook_evolution(request: Request):
                                     ]}]},
                                 )
                             if gr.status_code == 429:
-                                log.warning(f"Gemini Vision ({_gmodel}) rate limit (429) — tentando próximo")
-                                continue
+                                log.warning(f"Gemini Vision ({_gmodel}) rate limit — aguardando 5s")
+                                await _aio_vis.sleep(5)
+                                # retry uma vez
+                                async with httpx.AsyncClient(timeout=30) as gc:
+                                    gr = await gc.post(
+                                        f"https://generativelanguage.googleapis.com/{_api_ver}/models/{_gmodel}:generateContent",
+                                        params={"key": google_key},
+                                        json={"contents": [{"parts": [
+                                            {"inline_data": {"mime_type": "image/jpeg", "data": b64_str}},
+                                            {"text": _VISION_PROMPT},
+                                        ]}]},
+                                    )
                             if gr.status_code not in (200, 201):
                                 log.warning(f"Gemini Vision ({_gmodel}) HTTP {gr.status_code} — tentando próximo")
                                 continue
