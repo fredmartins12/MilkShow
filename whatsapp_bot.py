@@ -3740,40 +3740,64 @@ async def webhook_evolution(request: Request):
             if b64_data:
                 import base64 as _b64
                 img_bytes = _b64.b64decode(b64_data)
-                # Usa Claude Vision (melhor para imagens)
-                from anthropic import Anthropic
                 b64_str = _b64.standard_b64encode(img_bytes).decode()
-                client  = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
-                resp = client.messages.create(
-                    model="claude-haiku-4-5-20251001", max_tokens=600,
-                    messages=[{"role": "user", "content": [
-                        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64_str}},
-                        {"type": "text", "text": (
-                            "Analise esta imagem de uma fazenda leiteira. Identifique qual dos tipos:\n\n"
-                            "A) NOTA FISCAL / RECIBO / CUPOM: tem produtos, quantidades, valores, nome da loja.\n"
-                            "B) TABELA MENSAL DE PRODUÇÃO: coluna de datas e coluna de litros, dia a dia. "
-                            "Pode ser manuscrita em papel ou lousa. "
-                            "O título/cabeçalho pode ser o nome do produtor ou da fazenda — NÃO é necessariamente o nome de uma vaca. "
-                            "Se a tabela não identificar explicitamente um animal, use Animal: Rebanho.\n"
-                            "C) LISTA DE VACAS DO DIA: lista com vários animais identificados pelo nome e seus litros. "
-                            "Cada linha tem nome da vaca + litros (ex: Rainha 18L). Pode ser manuscrita.\n"
-                            "D) OUTRO\n\n"
-                            "Se A: responda exatamente:\n"
-                            "[NOTA FISCAL]\nFornecedor: ...\nItens:\n- Produto: X, Qtd: N, Unidade: U, Valor: R$V\n\n"
-                            "Se B: responda exatamente (leia com cuidado a escrita manual):\n"
-                            "[TABELA MENSAL]\nAnimal: (nome da vaca se identificado, senão 'Rebanho')\nMes: MM/AAAA\nRegistros:\n"
-                            "- Data: DD/MM/AAAA, Litros: N\n"
-                            "(use '//' para dias sem dado — ex: Litros: //)\n\n"
-                            "Se C: responda exatamente:\n"
-                            "[PRODUCAO DO DIA]\nData: DD/MM/AAAA (se visível, senão 'hoje')\nAnimais:\n"
-                            "- Animal: NomeVaca, Litros: N\n\n"
-                            "Se D: descreva brevemente.\n"
-                            "Extraia TODOS os dados visíveis. Inclua todas as linhas. "
-                            "Ignore rasuras. Responda somente os dados."
-                        )},
-                    ]}],
+                _VISION_PROMPT = (
+                    "Analise esta imagem de uma fazenda leiteira. Identifique qual dos tipos:\n\n"
+                    "A) NOTA FISCAL / RECIBO / CUPOM: tem produtos, quantidades, valores, nome da loja.\n"
+                    "B) TABELA MENSAL DE PRODUÇÃO: coluna de datas e coluna de litros, dia a dia. "
+                    "Pode ser manuscrita em papel ou lousa. "
+                    "O título/cabeçalho pode ser o nome do produtor ou da fazenda — NÃO é necessariamente o nome de uma vaca. "
+                    "Se a tabela não identificar explicitamente um animal, use Animal: Rebanho.\n"
+                    "C) LISTA DE VACAS DO DIA: lista com vários animais identificados pelo nome e seus litros. "
+                    "Cada linha tem nome da vaca + litros (ex: Rainha 18L). Pode ser manuscrita.\n"
+                    "D) OUTRO\n\n"
+                    "Se A: responda exatamente:\n"
+                    "[NOTA FISCAL]\nFornecedor: ...\nItens:\n- Produto: X, Qtd: N, Unidade: U, Valor: R$V\n\n"
+                    "Se B: responda exatamente (leia com cuidado a escrita manual):\n"
+                    "[TABELA MENSAL]\nAnimal: (nome da vaca se identificado, senão 'Rebanho')\nMes: MM/AAAA\nRegistros:\n"
+                    "- Data: DD/MM/AAAA, Litros: N\n"
+                    "(use '//' para dias sem dado — ex: Litros: //)\n\n"
+                    "Se C: responda exatamente:\n"
+                    "[PRODUCAO DO DIA]\nData: DD/MM/AAAA (se visível, senão 'hoje')\nAnimais:\n"
+                    "- Animal: NomeVaca, Litros: N\n\n"
+                    "Se D: descreva brevemente.\n"
+                    "Extraia TODOS os dados visíveis. Inclua todas as linhas. "
+                    "Ignore rasuras. Responda somente os dados."
                 )
-                texto_img = resp.content[0].text.strip()
+                texto_img = ""
+                # Tenta Gemini Vision primeiro (gratuito)
+                google_key = os.environ.get("GOOGLE_API_KEY", "")
+                if google_key:
+                    try:
+                        import google.generativeai as genai
+                        genai.configure(api_key=google_key)
+                        gmodel = genai.GenerativeModel("gemini-1.5-flash")
+                        import PIL.Image as PILImage
+                        import io
+                        pil_img = PILImage.open(io.BytesIO(img_bytes))
+                        gresp = gmodel.generate_content([_VISION_PROMPT, pil_img])
+                        texto_img = gresp.text.strip()
+                        log.info(f"[Evolution] Gemini Vision extraiu: {texto_img[:200]}")
+                    except Exception as eg:
+                        log.warning(f"Gemini Vision falhou: {eg}")
+                # Fallback Claude Vision
+                if not texto_img:
+                    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+                    if anthropic_key:
+                        try:
+                            from anthropic import Anthropic
+                            client = Anthropic(api_key=anthropic_key)
+                            cresp = client.messages.create(
+                                model="claude-haiku-4-5-20251001", max_tokens=600,
+                                messages=[{"role": "user", "content": [
+                                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64_str}},
+                                    {"type": "text", "text": _VISION_PROMPT},
+                                ]}],
+                            )
+                            texto_img = cresp.content[0].text.strip()
+                            log.info(f"[Evolution] Claude Vision extraiu: {texto_img[:200]}")
+                        except Exception as ec:
+                            log.warning(f"Claude Vision falhou: {ec}")
                 log.info(f"[Evolution] Vision extraiu: {texto_img[:200]}")
                 if "[TABELA MENSAL]" in texto_img:
                     texto = f"[Foto tabela mensal de producao] {texto_img}"
