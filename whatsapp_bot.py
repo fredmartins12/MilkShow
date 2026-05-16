@@ -140,6 +140,91 @@ PERMISSOES_LABELS = {
     "armazem":    "Armazém",
 }
 
+# Perfis prontos → lista de permissões
+_PERFIS: dict = {
+    "peão":          ["ordenha", "armazem"],
+    "piao":          ["ordenha", "armazem"],
+    "funcionario":   ["ordenha", "armazem"],
+    "funcionário":   ["ordenha", "armazem"],
+    "ordenha":       ["ordenha"],
+    "vet":           ["financeiro", "rebanho"],
+    "veterinario":   ["financeiro", "rebanho"],
+    "veterinário":   ["financeiro", "rebanho"],
+    "gerente":       ["ordenha", "armazem", "financeiro", "rebanho"],
+    "socio":         ["ordenha", "armazem", "financeiro", "rebanho"],
+    "sócio":         ["ordenha", "armazem", "financeiro", "rebanho"],
+    "admin":         ["admin"],
+    "dono":          ["admin"],
+    "proprietario":  ["admin"],
+    "proprietário":  ["admin"],
+}
+
+
+def _gerar_codigo_convite(fazenda_id: str, perfil: str, criado_por: str) -> str:
+    """Cria um convite de 48h no Firestore e retorna o código MKSH-XXXXXX."""
+    import random, string
+    codigo = "MKSH-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    permissoes = _PERFIS.get(perfil.lower(), ["ordenha"])
+    validade = (datetime.datetime.now() + datetime.timedelta(hours=48)).isoformat()
+    _db().collection("convites").document(codigo).set({
+        "fazenda_id":  fazenda_id,
+        "perfil":      perfil,
+        "permissoes":  permissoes,
+        "criado_por":  criado_por,
+        "criado_em":   datetime.datetime.now().isoformat(),
+        "validade":    validade,
+        "usado":       False,
+    })
+    return codigo
+
+
+def _usar_convite(codigo: str) -> Optional[dict]:
+    """Valida e retorna dados do convite se ainda válido e não usado. Não marca como usado."""
+    try:
+        doc = _db().collection("convites").document(codigo.upper()).get()
+        if not doc.exists:
+            return None
+        d = doc.to_dict()
+        if d.get("usado"):
+            return None
+        validade = datetime.datetime.fromisoformat(d["validade"])
+        if datetime.datetime.now() > validade:
+            return None
+        # Busca nome da fazenda
+        faz_doc = _db().collection("fazendas").document(d["fazenda_id"]).get()
+        nome_faz = faz_doc.to_dict().get("nome", "Fazenda") if faz_doc.exists else "Fazenda"
+        return {
+            "fazenda_id":  d["fazenda_id"],
+            "permissoes":  d["permissoes"],
+            "perfil":      d["perfil"],
+            "nome_fazenda": nome_faz,
+            "doc_id":      codigo.upper(),
+        }
+    except Exception as e:
+        log.warning(f"_usar_convite erro: {e}")
+        return None
+
+
+def _confirmar_convite(codigo: str, tel: str, nome_membro: str):
+    """Marca convite como usado e cria registro_tel para o novo membro."""
+    doc_ref = _db().collection("convites").document(codigo.upper())
+    d = doc_ref.get().to_dict()
+    permissoes = d.get("permissoes", ["ordenha"])
+    fazenda_id = d["fazenda_id"]
+    doc_ref.update({"usado": True, "usado_por": tel, "usado_em": datetime.datetime.now().isoformat()})
+    _db().collection("registros_tel").document(tel).set({
+        "fazenda_id": fazenda_id,
+        "nome":       nome_membro,
+        "permissoes": permissoes,
+        "ativo":      True,
+        "created_at": datetime.datetime.now().isoformat(),
+        "perfil":     d.get("perfil", "peão"),
+    })
+    _cache_del(f"usr:{tel}")
+    _log_correcao(fazenda_id, "NOVO_MEMBRO",
+                  f"{nome_membro} ({tel}) entrou como {d.get('perfil','?')} via convite {codigo.upper()}",
+                  d.get("criado_por", "sistema"))
+
 
 def _find_fazenda(tel_limpo: str) -> Optional[str]:
     """Retorna fazenda_id pelo número, com cache de 30 min."""
@@ -2033,17 +2118,29 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
     lower = texto.lower().strip()
     if lower in ("ajuda", "help", "oi", "olá", "ola"):
         _clear_conv(tel)
-        return (
+        _is_admin = "admin" in permissoes
+        _base = (
             "*MilkShow Bot*\n"
             "Envie mensagens naturais como:\n"
-            "- Comprei 5 sc racao por R$300\n"
-            "- Apliquei ivermectina no rebanho, R$80\n"
-            "- Paguei R$400 de mao de obra\n"
-            "- Vendi 1200L por R$1800\n"
-            "- Ordenha de hoje 450 litros\n"
-            "- Inseminei a Rainha hoje\n"
-            "- estoque | cancelar"
+            "• \"450 litros\" — ordenha do dia\n"
+            "• \"comprei ração R$300\" — financeiro\n"
+            "• \"apliquei ivermectina no rebanho\" — sanitário\n"
+            "• \"vendi 1200L por R$1800\" — venda\n\n"
+            "*Comandos:*\n"
+            "• *resumo* — relatório do dia\n"
+            "• *estoque* — ver armazém\n"
+            "• *pausar 2h* — modo silencioso\n"
+            "• *cancelar* — reinicia a conversa\n"
         )
+        if _is_admin:
+            _base += (
+                "\n*Equipe (admin):*\n"
+                "• *convidar peão* — gera código de convite\n"
+                "• *convidar vet* — convida veterinário\n"
+                "• *membros* — lista a equipe\n"
+                "• *remover [nome]* — remove acesso\n"
+            )
+        return _base
     if lower in ("cancelar", "cancela", "reiniciar", "reset", "/cancelar"):
         _clear_conv(tel)
         return "Conversa reiniciada. O que deseja registrar?"
@@ -2078,6 +2175,67 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
     if lower in ("retomar", "retome", "volta", "voltar", "/retomar"):
         _PAUSADO.pop(tel, None)
         return "✅ Modo silencioso desativado. Estou de volta!"
+
+    # ── Comandos de equipe (admin only) ──────────────────────────────
+    _m_convidar = re.match(
+        r'^convidar?\s+(pe[aã]o|funcionari[oa]|vet(?:erinari[oa])?|gerente|s[oó]cio|admin|dono|proprietari[oa]|ordenha)$',
+        lower
+    )
+    if _m_convidar:
+        if "admin" not in permissoes:
+            return "Apenas o administrador pode gerar convites."
+        _perfil = _m_convidar.group(1)
+        _codigo = _gerar_codigo_convite(fazenda_id, _perfil, tel)
+        _perms_label = " + ".join(
+            PERMISSOES_LABELS.get(p, p) for p in _PERFIS.get(_perfil.lower(), ["ordenha"])
+        )
+        return (
+            f"🔗 *Convite gerado!*\n\n"
+            f"Perfil: *{_perfil.capitalize()}* ({_perms_label})\n"
+            f"Código: *{_codigo}*\n\n"
+            f"Envie este código ao novo membro.\n"
+            f"Ele deve mandar o código no WhatsApp deste bot.\n"
+            f"⏳ Válido por *48 horas*."
+        )
+    if lower in ("membros", "equipe", "team", "/membros"):
+        try:
+            _docs = _db().collection("registros_tel").where(
+                filter=FieldFilter("fazenda_id", "==", fazenda_id)
+            ).where(filter=FieldFilter("ativo", "==", True)).stream()
+            _linhas = ["*👥 Membros da fazenda:*\n"]
+            for _d in _docs:
+                _m = _d.to_dict()
+                _nome_m = _m.get("nome", "?")
+                _tel_m  = _d.id
+                _perms_m = _m.get("permissoes", [])
+                _perfil_m = _m.get("perfil", "admin" if "admin" in _perms_m else "peão")
+                _label_m  = " + ".join(PERMISSOES_LABELS.get(p, p) for p in _perms_m)
+                _linhas.append(f"• *{_nome_m}* ({_perfil_m.capitalize()})\n  {_tel_m} — {_label_m}")
+            return "\n".join(_linhas) if len(_linhas) > 1 else "Nenhum membro encontrado."
+        except Exception as _e:
+            return f"Erro ao buscar membros: {_e}"
+    _m_remover = re.match(r'^remover\s+(.+)$', lower)
+    if _m_remover:
+        if "admin" not in permissoes:
+            return "Apenas o administrador pode remover membros."
+        _busca = _m_remover.group(1).strip()
+        try:
+            _docs_r = list(_db().collection("registros_tel").where(
+                filter=FieldFilter("fazenda_id", "==", fazenda_id)
+            ).where(filter=FieldFilter("ativo", "==", True)).stream())
+            _alvo = next((d for d in _docs_r
+                          if _busca in d.to_dict().get("nome", "").lower()
+                          or _busca in d.id), None)
+            if not _alvo:
+                return f"Não encontrei membro com nome ou número contendo '{_busca}'."
+            _nome_alvo = _alvo.to_dict().get("nome", _alvo.id)
+            _db().collection("registros_tel").document(_alvo.id).update({"ativo": False})
+            _cache_del(f"usr:{_alvo.id}")
+            _log_correcao(fazenda_id, "REMOVER_MEMBRO",
+                          f"{_nome_alvo} ({_alvo.id}) removido da fazenda", tel)
+            return f"✅ *{_nome_alvo}* foi removido da fazenda e não terá mais acesso."
+        except Exception as _e:
+            return f"Erro ao remover: {_e}"
 
     hist = conv.get("historico", [])
     hist.append({"role": "user", "content": texto})
@@ -3398,18 +3556,69 @@ def _gerar_alertas_proativos(fazenda_id: str) -> list:
 _ONBOARDING: dict = {}   # tel → {"step": str, "nome_pessoa": str, "nome_fazenda": str}
 _PAUSADO:    dict = {}   # tel → datetime quando o modo silencioso expira
 
+_RE_CONVITE = re.compile(r'^MKSH-[A-Z0-9]{6}$')
+
+
 def _processar_onboarding(tel: str, texto: str):
-    """Fluxo de cadastro: número desconhecido → cria fazenda pelo WhatsApp."""
+    """Fluxo de cadastro: número desconhecido → cria fazenda pelo WhatsApp
+    ou entra em fazenda existente via código de convite."""
     state = _ONBOARDING.get(tel, {})
     step  = state.get("step", "inicio")
     texto = texto.strip()
 
+    # ── Código de convite pode chegar em qualquer ponto do onboarding ──
+    if _RE_CONVITE.match(texto.upper()):
+        convite = _usar_convite(texto)
+        if convite:
+            _ONBOARDING[tel] = {
+                "step":       "aguarda_nome_membro",
+                "convite":    convite,
+            }
+            _enviar_whatsapp(tel,
+                f"🎉 Convite válido!\n\n"
+                f"Você vai entrar na fazenda *{convite['nome_fazenda']}* "
+                f"como *{convite['perfil'].capitalize()}*.\n\n"
+                f"Qual é o seu *nome*?"
+            )
+        else:
+            _enviar_whatsapp(tel,
+                "❌ Código inválido ou expirado.\n"
+                "Peça um novo convite ao administrador da fazenda."
+            )
+        return
+
+    # ── Fluxo de membro convidado: só coleta nome ───────────────────
+    if step == "aguarda_nome_membro":
+        if len(texto) < 2:
+            _enviar_whatsapp(tel, "Por favor, informe seu nome:")
+            return
+        convite = state["convite"]
+        try:
+            _confirmar_convite(convite["doc_id"], tel, texto)
+            del _ONBOARDING[tel]
+            _perms_label = " + ".join(
+                PERMISSOES_LABELS.get(p, p) for p in convite["permissoes"]
+            )
+            _enviar_whatsapp(tel,
+                f"✅ *Bem-vindo(a), {texto}!*\n\n"
+                f"🏡 Fazenda: *{convite['nome_fazenda']}*\n"
+                f"👤 Perfil: *{convite['perfil'].capitalize()}*\n"
+                f"🔑 Acesso: {_perms_label}\n\n"
+                f"Você já pode usar o bot! Envie *ajuda* para ver os comandos."
+            )
+        except Exception as e:
+            log.error(f"Onboarding convite erro: {e}")
+            _enviar_whatsapp(tel, f"Erro ao ativar convite: {str(e)[:80]}")
+        return
+
+    # ── Fluxo normal: cria nova fazenda ─────────────────────────────
     if step == "inicio" or not state:
         _ONBOARDING[tel] = {"step": "aguarda_nome_pessoa"}
         _enviar_whatsapp(tel,
             "👋 Olá! Bem-vindo ao *MilkShow*!\n\n"
-            "Seu número não está cadastrado ainda.\n"
-            "Vamos criar seu cadastro rapidinho!\n\n"
+            "Seu número não está cadastrado ainda.\n\n"
+            "Se você recebeu um *código de convite*, envie-o agora.\n"
+            "Ou vamos criar uma nova fazenda!\n\n"
             "Qual é o seu *nome*?"
         )
         return
@@ -3455,7 +3664,8 @@ def _processar_onboarding(tel: str, texto: str):
                 f"• \"450 litros\" — produção do dia\n"
                 f"• \"comprei ração 300 reais\" — financeiro\n"
                 f"• \"ajuda\" — ver todos os comandos\n\n"
-                f"Acesse o painel em: http://178.104.252.193"
+                f"Acesse o painel em: http://178.104.252.193\n\n"
+                f"💡 Para convidar funcionários: envie *convidar peão* ou *convidar vet*"
             )
         except Exception as e:
             log.error(f"Onboarding erro: {e}")
