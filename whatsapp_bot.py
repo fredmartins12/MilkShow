@@ -205,7 +205,7 @@ def _coll(fazenda_id: str, nome: str):
 # ─────────────────────────────────────────────
 _CONV_MEM: dict = {}   # tel → conv dict
 _CONV_LOCK = threading.Lock()
-_CONV_TTL  = 7200      # 2h — igual ao TTL de abandono de conversa
+_CONV_TTL  = 1800      # 30min — igual ao TTL de abandono de conversa
 
 def _get_conv(tel: str) -> dict:
     """Lê do cache em memória; cai no Firebase só na primeira vez."""
@@ -1997,14 +1997,14 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
         permissoes = ["admin"]
     conv = _get_conv(tel)
 
-    # TTL: abandona conversas COLETANDO/CONFIRMANDO com mais de 2h
+    # TTL: abandona conversas COLETANDO/CONFIRMANDO com mais de 30min
     if conv.get("estado") not in ("idle", None):
         ts_str = conv.get("ts", "")
         if ts_str:
             try:
                 idade = (datetime.datetime.now() -
                          datetime.datetime.fromisoformat(ts_str)).total_seconds()
-                if idade > 7200:  # 2 horas
+                if idade > 1800:  # 30 minutos
                     _clear_conv(tel)
                     conv = {"historico": [], "estado": "idle", "dados": {}, "tipo": None}
             except Exception:
@@ -2033,9 +2033,20 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
             "- Inseminei a Rainha hoje\n"
             "- estoque | cancelar"
         )
-    if lower in ("cancelar", "cancela", "reiniciar", "reset"):
+    if lower in ("cancelar", "cancela", "reiniciar", "reset", "/cancelar"):
         _clear_conv(tel)
         return "Conversa reiniciada. O que deseja registrar?"
+
+    # Detecta frustração quando há conversa ativa — reseta e pede novo input
+    _FRUSTRACOES = {
+        "errado", "não é isso", "nao e isso", "não entendeu", "nao entendeu",
+        "esquece", "esquece isso", "para", "para tudo", "começa de novo",
+        "comeca de novo", "não é isso não", "foi errado", "registrou errado",
+        "salvou errado", "gravou errado",
+    }
+    if conv.get("estado") not in ("idle", None) and lower in _FRUSTRACOES:
+        _clear_conv(tel)
+        return "Ok, vamos recomeçar! O que você quer registrar agora?"
     if lower == "estoque":
         return f"*Estoque atual:*\n{_ctx_estoque(fazenda_id)}"
 
@@ -2413,6 +2424,9 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str, registrado_por: str = "Bot 
     elif tipo == "PRODUCAO_LEITE":
         litros  = _parse_float(dados.get("litros"))
         data    = dados.get("data") or hoje
+        # Valida litros absurdos
+        if litros > 500:
+            return f"⚠️ {litros:.0f} L parece muito alto para uma vaca. Pode confirmar esse valor?"
         # BUG4: Claude pode retornar "manha"/"tarde" em vez de 1/2 — conversão segura
         _turno_raw = dados.get("turno") or 1
         _turno_map = {"manha": 1, "manhã": 1, "tarde": 2, "noite": 3}
@@ -2427,6 +2441,21 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str, registrado_por: str = "Bot 
         else:
             id_ani   = "geral"
             nome_ani = "Rebanho"
+
+        # Verifica duplicata: mesmo animal, mesmo dia, mesmo turno
+        try:
+            dup = list(_coll(fazenda_id, "producao")
+                       .where(filter=FieldFilter("data", "==", str(data)))
+                       .where(filter=FieldFilter("id_animal", "==", id_ani))
+                       .where(filter=FieldFilter("turno", "==", turno))
+                       .limit(1).stream())
+            if dup:
+                d_dup = dup[0].to_dict()
+                turno_txt_dup = {1: "Manhã", 2: "Tarde", 3: "Noite"}.get(turno, str(turno))
+                return (f"⚠️ Já existe registro de {nome_ani} no {turno_txt_dup} de {data} "
+                        f"({d_dup.get('leite', 0):.0f} L). Quer substituir? Se sim, diga 'substitui'.")
+        except Exception:
+            pass
 
         _coll(fazenda_id, "producao").add({
             "data": str(data), "leite": litros, "turno": turno,
@@ -3150,7 +3179,20 @@ def _gerar_relatorio_semanal(fazenda_id: str) -> str:
             por_ani[n] = por_ani.get(n, 0) + dd.get("leite", 0)
         media_dia = total_l / 7
         top = sorted(por_ani.items(), key=lambda x: x[1], reverse=True)[:3]
-        linhas.append(f"*Produção:* {total_l:.0f} L ({media_dia:.0f} L/dia)")
+        # Compara com semana anterior para detectar queda
+        ini_sem_ant = ini_sem - datetime.timedelta(days=7)
+        prod_ant = list(_coll(fazenda_id, "producao")
+                        .where(filter=FieldFilter("data", ">=", ini_sem_ant.isoformat()))
+                        .where(filter=FieldFilter("data", "<", ini_sem.isoformat())).stream())
+        total_ant = sum(d.to_dict().get("leite", 0) for d in prod_ant)
+        variacao = ""
+        if total_ant > 0:
+            pct = (total_l - total_ant) / total_ant * 100
+            if pct <= -20:
+                variacao = f" ⚠️ Queda de {abs(pct):.0f}% vs semana anterior!"
+            elif pct >= 10:
+                variacao = f" 📈 Alta de {pct:.0f}% vs semana anterior"
+        linhas.append(f"*Produção:* {total_l:.0f} L ({media_dia:.0f} L/dia){variacao}")
         if top:
             linhas.append("Top vacas: " + ", ".join(f"{n} {v:.0f}L" for n, v in top))
     except Exception:
@@ -3707,7 +3749,6 @@ async def webhook_evolution(request: Request):
 
     # Extrai texto (suporta conversation e extendedTextMessage)
     msg = data.get("message", {})
-    log.info(f"[DEBUG] evento={evento} messageType={data.get('messageType','')} msg_keys={list(msg.keys())[:8]}")
     texto = (
         msg.get("conversation") or
         msg.get("extendedTextMessage", {}).get("text") or
@@ -3749,6 +3790,8 @@ async def webhook_evolution(request: Request):
 
     # Imagem
     if not texto and "imageMessage" in msg:
+        # Feedback imediato antes de processar (pode demorar 5-15s)
+        _enviar_whatsapp(tel_limpo, "📷 Analisando imagem...")
         try:
             ev_url  = os.environ.get("EVOLUTION_URL", "").rstrip("/")
             ev_key  = os.environ.get("EVOLUTION_KEY", "")
