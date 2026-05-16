@@ -3254,7 +3254,7 @@ def _gerar_alertas_proativos(fazenda_id: str) -> list:
 # ─────────────────────────────────────────────
 # ONBOARDING VIA WHATSAPP
 # ─────────────────────────────────────────────
-_ONBOARDING: dict = {}   # tel → {"step": str, "nome_fazenda": str}
+_ONBOARDING: dict = {}   # tel → {"step": str, "nome_pessoa": str, "nome_fazenda": str}
 
 def _processar_onboarding(tel: str, texto: str):
     """Fluxo de cadastro: número desconhecido → cria fazenda pelo WhatsApp."""
@@ -3263,19 +3263,31 @@ def _processar_onboarding(tel: str, texto: str):
     texto = texto.strip()
 
     if step == "inicio" or not state:
-        _ONBOARDING[tel] = {"step": "aguarda_nome"}
+        _ONBOARDING[tel] = {"step": "aguarda_nome_pessoa"}
         _enviar_whatsapp(tel,
             "👋 Olá! Bem-vindo ao *MilkShow*!\n\n"
             "Seu número não está cadastrado ainda.\n"
-            "Quer criar sua fazenda agora? Qual é o *nome da fazenda*?"
+            "Vamos criar seu cadastro rapidinho!\n\n"
+            "Qual é o seu *nome*?"
         )
         return
 
-    if step == "aguarda_nome":
+    if step == "aguarda_nome_pessoa":
+        if len(texto) < 2:
+            _enviar_whatsapp(tel, "Por favor, informe seu nome:")
+            return
+        _ONBOARDING[tel] = {"step": "aguarda_nome_fazenda", "nome_pessoa": texto}
+        _enviar_whatsapp(tel,
+            f"Prazer, *{texto}*! 😊\n\n"
+            "Qual é o *nome da sua fazenda*?"
+        )
+        return
+
+    if step == "aguarda_nome_fazenda":
         if len(texto) < 2:
             _enviar_whatsapp(tel, "Por favor, informe o nome da fazenda:")
             return
-        _ONBOARDING[tel] = {"step": "aguarda_email", "nome_fazenda": texto}
+        _ONBOARDING[tel] = {**state, "step": "aguarda_email", "nome_fazenda": texto}
         _enviar_whatsapp(tel,
             f"Ótimo! *{texto}* 🐄\n\n"
             "Agora informe seu *e-mail* para acessar o painel web:"
@@ -3288,11 +3300,13 @@ def _processar_onboarding(tel: str, texto: str):
             _enviar_whatsapp(tel, "E-mail inválido. Tente novamente:")
             return
         nome_fazenda = state.get("nome_fazenda", "Minha Fazenda")
+        nome_pessoa  = state.get("nome_pessoa", "")
         try:
-            _criar_fazenda_whatsapp(tel, email, nome_fazenda)
+            _criar_fazenda_whatsapp(tel, email, nome_fazenda, nome_pessoa)
             del _ONBOARDING[tel]
             _enviar_whatsapp(tel,
-                f"✅ *Fazenda criada com sucesso!*\n\n"
+                f"✅ *Cadastro criado com sucesso!*\n\n"
+                f"👤 {nome_pessoa}\n"
                 f"🏡 {nome_fazenda}\n"
                 f"📧 {email}\n\n"
                 f"Você já pode usar o bot! Exemplos:\n"
@@ -3303,16 +3317,16 @@ def _processar_onboarding(tel: str, texto: str):
             )
         except Exception as e:
             log.error(f"Onboarding erro: {e}")
-            _enviar_whatsapp(tel, f"Erro ao criar fazenda: {str(e)[:80]}\nTente novamente ou acesse o app.")
+            _enviar_whatsapp(tel, f"Erro ao criar cadastro: {str(e)[:80]}\nTente novamente ou acesse o app.")
         return
 
     # Step desconhecido — reinicia
     _ONBOARDING.pop(tel, None)
-    _enviar_whatsapp(tel, "Vamos recomeçar. Qual é o *nome da fazenda*?")
-    _ONBOARDING[tel] = {"step": "aguarda_nome"}
+    _enviar_whatsapp(tel, "Vamos recomeçar. Qual é o seu *nome*?")
+    _ONBOARDING[tel] = {"step": "aguarda_nome_pessoa"}
 
 
-def _criar_fazenda_whatsapp(tel: str, email: str, nome_fazenda: str):
+def _criar_fazenda_whatsapp(tel: str, email: str, nome_fazenda: str, nome_pessoa: str = ""):
     """Cria documentos Firestore para nova fazenda cadastrada pelo WhatsApp."""
     import uuid
     fazenda_id = str(uuid.uuid4())[:12].replace("-", "")
@@ -3321,18 +3335,19 @@ def _criar_fazenda_whatsapp(tel: str, email: str, nome_fazenda: str):
         "nome":        nome_fazenda,
         "owner_email": email,
         "owner_tel":   tel,
+        "owner_nome":  nome_pessoa,
         "created_at":  datetime.datetime.now().isoformat(),
         "plano":       "trial",
     })
     db.collection("users").document(fazenda_id).set({
         "email":      email,
         "fazenda_id": fazenda_id,
-        "nome":       nome_fazenda,
+        "nome":       nome_pessoa or nome_fazenda,
         "created_at": datetime.datetime.now().isoformat(),
     })
     db.collection("registros_tel").document(tel).set({
         "fazenda_id": fazenda_id,
-        "nome":       "Proprietário",
+        "nome":       nome_pessoa or "Proprietário",
         "permissoes": ["admin"],
         "ativo":      True,
         "email":      email,
@@ -3786,6 +3801,15 @@ async def webhook_evolution(request: Request):
 
     fazenda_id = user_info["fazenda_id"]
     permissoes = user_info["permissoes"]
+
+    # Saudação simples: "oi", "olá", "bom dia" etc → responde direto sem IA
+    _SAUDACOES = {"oi", "olá", "ola", "oii", "oiii", "hey", "ei",
+                  "bom dia", "boa tarde", "boa noite", "bom dia!", "boa tarde!", "boa noite!"}
+    if texto.strip().lower().rstrip("!").strip() in _SAUDACOES or texto.strip().lower() in _SAUDACOES:
+        nome = user_info.get("nome", "").split()[0] if user_info.get("nome") else ""
+        saudacao = f"Oi, {nome}! " if nome else "Oi! "
+        _enviar_whatsapp(tel_limpo, saudacao + "Como posso ajudar? 😊")
+        return {"ok": True}
 
     # Anti-flood: se chegaram várias mensagens juntas (offline), agrupa antes de processar
     with _FILA_LOCK:
