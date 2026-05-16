@@ -2424,13 +2424,29 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str, registrado_por: str = "Bot 
     elif tipo == "PRODUCAO_LEITE":
         litros  = _parse_float(dados.get("litros"))
         data    = dados.get("data") or hoje
-        # Valida litros absurdos (limites diferentes para vaca individual vs rebanho)
+        # Valida litros: vaca individual → limite fixo 50L
+        # Rebanho → compara com média dos últimos 14 dias, avisa se dobrar
         _animal_raw = dados.get("animal") or ""
         _eh_rebanho = not _animal_raw or _animal_raw.lower() in ("rebanho", "")
-        _limite = 2000 if _eh_rebanho else 50
-        if litros > _limite:
-            _quem = "o rebanho" if _eh_rebanho else f"uma vaca ({_animal_raw})"
-            return f"⚠️ {litros:.0f} L parece muito alto para {_quem}. Pode confirmar esse valor?"
+        if not _eh_rebanho and litros > 50:
+            return f"⚠️ {litros:.0f} L parece muito alto para uma vaca ({_animal_raw}). Pode confirmar?"
+        if _eh_rebanho and litros > 0:
+            try:
+                _14dias_atras = (datetime.date.today() - datetime.timedelta(days=14)).isoformat()
+                _hist = list(_coll(fazenda_id, "producao")
+                             .where(filter=FieldFilter("data", ">=", _14dias_atras)).stream())
+                if _hist:
+                    # Soma por dia e calcula média diária total do rebanho
+                    _por_dia: dict = {}
+                    for _d in _hist:
+                        _dd = _d.to_dict()
+                        _por_dia[_dd.get("data", "")] = _por_dia.get(_dd.get("data", ""), 0) + _dd.get("leite", 0)
+                    _media = sum(_por_dia.values()) / len(_por_dia) if _por_dia else 0
+                    if _media > 0 and litros > _media * 2:
+                        return (f"⚠️ {litros:.0f} L é mais que o dobro da média diária do rebanho "
+                                f"({_media:.0f} L/dia). Pode confirmar esse valor?")
+            except Exception:
+                pass
         # BUG4: Claude pode retornar "manha"/"tarde" em vez de 1/2 — conversão segura
         _turno_raw = dados.get("turno") or 1
         _turno_map = {"manha": 1, "manhã": 1, "tarde": 2, "noite": 3}
