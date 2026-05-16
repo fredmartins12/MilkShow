@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -493,7 +494,62 @@ body::before {
     <div class="orbit-ring"></div>
     <div class="orbit-ring"></div>
     <div class="orbit-ring"></div>
-    <div class="orbit-center">🥛</div>
+    <div class="orbit-center" style="background:none;border:none;">
+      <!-- MilkShow Bot Mascot -->
+      <svg viewBox="0 0 120 130" width="52%" height="52%" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(0 0 18px rgba(74,222,128,0.35))">
+        <defs>
+          <radialGradient id="eyeGlow" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#4ade80" stop-opacity="1"/>
+            <stop offset="100%" stop-color="#16a34a" stop-opacity="0.6"/>
+          </radialGradient>
+          <linearGradient id="bodyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#0f2235"/>
+            <stop offset="100%" stop-color="#071525"/>
+          </linearGradient>
+        </defs>
+        <!-- Antenna base -->
+        <line x1="60" y1="18" x2="60" y2="5" stroke="#4ade80" stroke-width="2.5" stroke-linecap="round"/>
+        <circle cx="60" cy="4" r="4.5" fill="#4ade80"/>
+        <!-- Antenna glow pulse -->
+        <circle cx="60" cy="4" r="7" fill="#4ade80" opacity="0.15">
+          <animate attributeName="r" values="5;10;5" dur="2s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" values="0.2;0;0.2" dur="2s" repeatCount="indefinite"/>
+        </circle>
+        <!-- Head -->
+        <rect x="20" y="18" width="80" height="65" rx="18" fill="url(#bodyGrad)" stroke="#4ade80" stroke-width="1.5"/>
+        <!-- Head top shine -->
+        <rect x="32" y="20" width="56" height="3" rx="2" fill="#4ade80" opacity="0.12"/>
+        <!-- Left ear -->
+        <rect x="10" y="34" width="12" height="22" rx="6" fill="url(#bodyGrad)" stroke="#4ade80" stroke-width="1.2"/>
+        <!-- Right ear -->
+        <rect x="98" y="34" width="12" height="22" rx="6" fill="url(#bodyGrad)" stroke="#4ade80" stroke-width="1.2"/>
+        <!-- Left eye outer glow -->
+        <circle cx="44" cy="45" r="11" fill="#16a34a" opacity="0.15"/>
+        <!-- Left eye -->
+        <circle cx="44" cy="45" r="7" fill="url(#eyeGlow)"/>
+        <circle cx="46" cy="43" r="2" fill="#fff" opacity="0.5"/>
+        <!-- Right eye outer glow -->
+        <circle cx="76" cy="45" r="11" fill="#16a34a" opacity="0.15"/>
+        <!-- Right eye -->
+        <circle cx="76" cy="45" r="7" fill="url(#eyeGlow)"/>
+        <circle cx="78" cy="43" r="2" fill="#fff" opacity="0.5"/>
+        <!-- Eye blink animation -->
+        <rect x="37" y="42" width="14" height="6" rx="3" fill="url(#bodyGrad)" opacity="0">
+          <animate attributeName="opacity" values="0;0;0;1;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0" dur="4s" repeatCount="indefinite"/>
+        </rect>
+        <rect x="69" y="42" width="14" height="6" rx="3" fill="url(#bodyGrad)" opacity="0">
+          <animate attributeName="opacity" values="0;0;0;1;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0" dur="4s" repeatCount="indefinite"/>
+        </rect>
+        <!-- Smile -->
+        <path d="M 42 65 Q 60 77 78 65" stroke="#4ade80" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+        <!-- Body -->
+        <rect x="28" y="87" width="64" height="35" rx="14" fill="url(#bodyGrad)" stroke="#4ade80" stroke-width="1.2"/>
+        <!-- Chest: milk drop icon -->
+        <path d="M 53 95 Q 60 86 67 95 Q 71 102 60 109 Q 49 102 53 95Z" fill="#4ade80" opacity="0.85"/>
+        <!-- "M" badge on forehead -->
+        <text x="60" y="32" text-anchor="middle" font-size="9" font-weight="900" fill="#4ade80" opacity="0.5" font-family="monospace">MILK</text>
+      </svg>
+    </div>
     <div class="orbit-node" style="top:10%;left:50%;transform:translate(-50%,-50%)"></div>
     <div class="orbit-node" style="bottom:10%;right:20%;background:var(--cyan);box-shadow:0 0 12px var(--cyan)"></div>
     <div class="orbit-node" style="top:50%;left:8%;transform:translateY(-50%);background:var(--amber);box-shadow:0 0 12px var(--amber)"></div>
@@ -1241,13 +1297,34 @@ body::before {
         <span class="badge badge-amber" style="font-size:13px;padding:8px 20px;">Foco Paraíba / Nordeste</span>
       </div>
     </div>
-    <div class="animate-up" style="margin-top:48px;padding:24px;background:var(--surface);border:1px solid var(--border);border-radius:16px;">
-      <div style="font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-bottom:12px;letter-spacing:1px;">CONTATO</div>
-      <div style="font-size:16px;font-weight:600;color:var(--text);">fredmartins12</div>
-      <div style="font-size:13px;color:var(--green-l);margin-top:4px;">GitHub · github.com/fredmartins12/MilkShow</div>
-      <div style="font-size:12px;color:var(--text3);margin-top:8px;">Demo ao vivo disponível · Piloto com acesso aberto</div>
+    <!-- QR + Contato -->
+    <div class="animate-up" style="margin-top:36px;display:flex;gap:20px;align-items:stretch;justify-content:center;flex-wrap:wrap;">
+      <!-- QR Code -->
+      <div style="padding:20px 24px;background:var(--surface);border:1px solid rgba(74,222,128,0.3);border-radius:16px;display:flex;flex-direction:column;align-items:center;gap:10px;min-width:170px;">
+        <div style="font-size:10px;color:var(--green-l);font-family:'JetBrains Mono',monospace;letter-spacing:2px;text-transform:uppercase;">Teste Agora</div>
+        <div style="background:#fff;border-radius:10px;padding:8px;line-height:0;">
+          <canvas id="qrCanvas" width="120" height="120"></canvas>
+        </div>
+        <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;text-align:center;">
+          Escaneie com a câmera<br>e teste o bot no WhatsApp
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="#25d366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.123.554 4.118 1.528 5.849L.057 23.571l5.885-1.539A11.95 11.95 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.006-1.369l-.36-.213-3.713.973.989-3.617-.234-.373A9.818 9.818 0 012.182 12C2.182 6.57 6.57 2.182 12 2.182S21.818 6.57 21.818 12 17.43 21.818 12 21.818z"/></svg>
+          <span style="font-size:11px;color:var(--green-l);font-weight:600;">WhatsApp Bot</span>
+        </div>
+      </div>
+      <!-- Contato -->
+      <div style="padding:20px 24px;background:var(--surface);border:1px solid var(--border);border-radius:16px;display:flex;flex-direction:column;justify-content:center;gap:8px;flex:1;min-width:200px;max-width:320px;">
+        <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;letter-spacing:2px;margin-bottom:4px;">CONTATO</div>
+        <div style="font-size:16px;font-weight:700;color:var(--text);">Fred Martins</div>
+        <div style="font-size:12px;color:var(--green-l);">github.com/fredmartins12/MilkShow</div>
+        <div style="height:1px;background:var(--border);margin:4px 0;"></div>
+        <div style="font-size:11px;color:var(--text2);">Demo ao vivo disponível</div>
+        <div style="font-size:11px;color:var(--text2);">Piloto com acesso aberto</div>
+        <div style="font-size:11px;color:var(--text2);">Servidor rodando 24/7 em Hetzner</div>
+      </div>
     </div>
-    <div class="animate-up" style="margin-top:24px;font-size:11px;color:var(--text3);font-family:'JetBrains Mono',monospace;">
+    <div class="animate-up" style="margin-top:20px;font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;">
       Dados: Embrapa Anuário Leite 2025 · IBGE 2024 · Liga Ventures · Radar Agtech 2025
     </div>
   </div>
@@ -1256,6 +1333,11 @@ body::before {
 </div><!-- #deck -->
 
 <script>
+// ─── CONFIG ────────────────────────────────────────────────────────────────────
+// 👉 Troque pelo número real do bot (formato internacional, sem + ou espaços)
+const BOT_PHONE   = '5583999999999'
+const BOT_WA_LINK = `https://wa.me/${BOT_PHONE}?text=Oi%2C%20quero%20conhecer%20o%20MilkShow!`
+
 // ─── SLIDE ENGINE ──────────────────────────────────────────────────────────────
 const slides = document.querySelectorAll('.slide')
 const total  = slides.length
@@ -1320,6 +1402,9 @@ function go(delta) {
 
   // Init charts for new slide
   initCharts(cur)
+
+  // QR code on last slide
+  if (cur === total - 1) initQR()
 
   setTimeout(() => { animating = false }, 520)
 }
@@ -1557,6 +1642,20 @@ function initFundChart() {
       }
     }
   })
+}
+
+// ─── QR CODE ──────────────────────────────────────────────────────────────────
+let qrDone = false
+function initQR() {
+  if (qrDone) return
+  const canvas = document.getElementById('qrCanvas')
+  if (!canvas || typeof QRCode === 'undefined') return
+  QRCode.toCanvas(canvas, BOT_WA_LINK, {
+    width: 120,
+    margin: 1,
+    color: { dark: '#030b14', light: '#ffffff' },
+    errorCorrectionLevel: 'M',
+  }, err => { if (!err) qrDone = true })
 }
 
 // init first slide triggers
