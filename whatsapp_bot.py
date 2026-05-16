@@ -3685,6 +3685,7 @@ async def webhook_evolution(request: Request):
 
     # Extrai texto (suporta conversation e extendedTextMessage)
     msg = data.get("message", {})
+    log.info(f"[DEBUG] evento={evento} messageType={data.get('messageType','')} msg_keys={list(msg.keys())[:8]}")
     texto = (
         msg.get("conversation") or
         msg.get("extendedTextMessage", {}).get("text") or
