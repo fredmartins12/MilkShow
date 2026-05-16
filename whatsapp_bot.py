@@ -2424,9 +2424,13 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str, registrado_por: str = "Bot 
     elif tipo == "PRODUCAO_LEITE":
         litros  = _parse_float(dados.get("litros"))
         data    = dados.get("data") or hoje
-        # Valida litros absurdos
-        if litros > 500:
-            return f"⚠️ {litros:.0f} L parece muito alto para uma vaca. Pode confirmar esse valor?"
+        # Valida litros absurdos (limites diferentes para vaca individual vs rebanho)
+        _animal_raw = dados.get("animal") or ""
+        _eh_rebanho = not _animal_raw or _animal_raw.lower() in ("rebanho", "")
+        _limite = 2000 if _eh_rebanho else 50
+        if litros > _limite:
+            _quem = "o rebanho" if _eh_rebanho else f"uma vaca ({_animal_raw})"
+            return f"⚠️ {litros:.0f} L parece muito alto para {_quem}. Pode confirmar esse valor?"
         # BUG4: Claude pode retornar "manha"/"tarde" em vez de 1/2 — conversão segura
         _turno_raw = dados.get("turno") or 1
         _turno_map = {"manha": 1, "manhã": 1, "tarde": 2, "noite": 3}
