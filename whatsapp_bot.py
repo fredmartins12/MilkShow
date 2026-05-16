@@ -2015,6 +2015,17 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
         log.warning(f"[{tel}] rate limit atingido")
         return "Muitas mensagens em pouco tempo. Aguarde um momento e tente novamente."
 
+    # Modo silencioso — ignora mensagens até o prazo expirar
+    _pausado_ate = _PAUSADO.get(tel)
+    if _pausado_ate:
+        if datetime.datetime.now() < _pausado_ate:
+            _lower_chk = texto.lower().strip()
+            if _lower_chk not in ("retomar", "retome", "volta", "voltar", "/retomar"):
+                log.info(f"[{tel}] pausado até {_pausado_ate.isoformat()} — ignorando")
+                return ""
+        else:
+            _PAUSADO.pop(tel, None)
+
     animais = _ctx_animais(fazenda_id)
     estoque = _ctx_estoque(fazenda_id)
 
@@ -2049,6 +2060,24 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
         return "Ok, vamos recomeçar! O que você quer registrar agora?"
     if lower == "estoque":
         return f"*Estoque atual:*\n{_ctx_estoque(fazenda_id)}"
+    if lower in ("resumo", "status", "/resumo"):
+        return _relatorio_manha(fazenda_id)
+    # Pausar: "pausar 2h" / "pausar 30min"
+    _m_pausar = re.match(r'^pausar\s+(\d+)\s*(h|hora|horas|min|minutos?)?$', lower)
+    if _m_pausar or lower in ("pausar", "silencio", "silêncio", "nao perturbe", "não perturbe"):
+        if _m_pausar:
+            _qtd = int(_m_pausar.group(1))
+            _uni = (_m_pausar.group(2) or "h").lower()
+            _minutos = _qtd if _uni.startswith("min") else _qtd * 60
+        else:
+            _minutos = 60  # padrão 1h
+        _PAUSADO[tel] = datetime.datetime.now() + datetime.timedelta(minutes=_minutos)
+        _h = _minutos // 60; _m = _minutos % 60
+        _dur = f"{_h}h" + (f"{_m}min" if _m else "") if _h else f"{_m}min"
+        return f"🔕 Modo silencioso ativado por *{_dur}*.\nPara retomar, envie *retomar*."
+    if lower in ("retomar", "retome", "volta", "voltar", "/retomar"):
+        _PAUSADO.pop(tel, None)
+        return "✅ Modo silencioso desativado. Estou de volta!"
 
     hist = conv.get("historico", [])
     hist.append({"role": "user", "content": texto})
@@ -2649,6 +2678,9 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str, registrado_por: str = "Bot 
             "data": data_p, "leite": litros_novo, "turno": turno,
             "id_animal": id_a, "nome_animal": animal, "racao": 0,
         })
+        _log_correcao(fazenda_id, "CORRIGIR_PRODUCAO",
+                      f"{animal} em {data_p}: {litros_antigo:.0f}L → {litros_novo:.0f}L",
+                      registrado_por)
         return (f"*Corrigido!*\n{animal} em {data_p}: "
                 f"{litros_antigo:.0f} L → *{litros_novo:.0f} L*")
 
@@ -2666,6 +2698,9 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str, registrado_por: str = "Bot 
         total_apagado = sum(d.to_dict().get("leite", 0) for d in antigos)
         for d in antigos:
             _coll(fazenda_id, "producao").document(d.id).delete()
+        _log_correcao(fazenda_id, "APAGAR_PRODUCAO",
+                      f"{animal} em {data_p}: {total_apagado:.0f}L apagado",
+                      registrado_por)
         return f"*Apagado!*\nProdução de {animal} em {data_p} ({total_apagado:.0f} L) removida."
 
     # ── CORRIGIR_LANCAMENTO ───────────────────
@@ -2689,6 +2724,9 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str, registrado_por: str = "Bot 
         doc = candidatos[0]
         val_antigo = doc.to_dict().get("valor", 0)
         _coll(fazenda_id, "financeiro").document(doc.id).update({"valor": val_novo})
+        _log_correcao(fazenda_id, "CORRIGIR_LANCAMENTO",
+                      f"{doc.to_dict().get('desc','')} em {data_l}: R${val_antigo:.2f} → R${val_novo:.2f}",
+                      registrado_por)
         return (f"*Corrigido!*\n{doc.to_dict().get('desc','')} em {data_l}: "
                 f"R${val_antigo:.2f} → *R${val_novo:.2f}*")
 
@@ -2714,6 +2752,9 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str, registrado_por: str = "Bot 
         doc = candidatos[0]
         d_dict = doc.to_dict()
         _coll(fazenda_id, "financeiro").document(doc.id).delete()
+        _log_correcao(fazenda_id, "APAGAR_LANCAMENTO",
+                      f"{d_dict.get('desc','')} R${d_dict.get('valor',0):.2f} ({data_l}) apagado",
+                      registrado_por)
         return (f"*Apagado!*\n{d_dict.get('desc','')} — R${d_dict.get('valor',0):.2f} "
                 f"({data_l}) removido do financeiro.")
 
@@ -3312,6 +3353,22 @@ def _gerar_alertas_proativos(fazenda_id: str) -> list:
         pass
 
     try:
+        # Vaca seca — vaca em Lactação sem produção há 3+ dias úteis
+        _3_dias_atras = (hoje - datetime.timedelta(days=3)).isoformat()
+        animais_lac = [d.to_dict() for d in _coll(fazenda_id, "animais").stream()
+                       if d.to_dict().get("status") == "Lactação"]
+        if animais_lac:
+            prod_recente = list(_coll(fazenda_id, "producao")
+                                .where(filter=FieldFilter("data", ">=", _3_dias_atras)).stream())
+            animais_com_prod = {d.to_dict().get("nome_animal") for d in prod_recente}
+            for a in animais_lac:
+                nome_a = a.get("nome", "?")
+                if nome_a not in animais_com_prod and nome_a.lower() not in ("rebanho", ""):
+                    alertas.append(f"Vaca seca? *{nome_a}* está em Lactação mas sem produção há 3+ dias.")
+    except Exception:
+        pass
+
+    try:
         # Estoque zerado
         est = [d.to_dict() for d in _coll(fazenda_id, "estoque").stream()]
         for e in est:
@@ -3339,6 +3396,7 @@ def _gerar_alertas_proativos(fazenda_id: str) -> list:
 # ONBOARDING VIA WHATSAPP
 # ─────────────────────────────────────────────
 _ONBOARDING: dict = {}   # tel → {"step": str, "nome_pessoa": str, "nome_fazenda": str}
+_PAUSADO:    dict = {}   # tel → datetime quando o modo silencioso expira
 
 def _processar_onboarding(tel: str, texto: str):
     """Fluxo de cadastro: número desconhecido → cria fazenda pelo WhatsApp."""
@@ -3408,6 +3466,19 @@ def _processar_onboarding(tel: str, texto: str):
     _ONBOARDING.pop(tel, None)
     _enviar_whatsapp(tel, "Vamos recomeçar. Qual é o seu *nome*?")
     _ONBOARDING[tel] = {"step": "aguarda_nome_pessoa"}
+
+
+def _log_correcao(fazenda_id: str, operacao: str, detalhe: str, registrado_por: str):
+    """Salva entrada no histórico de correções da fazenda."""
+    try:
+        _coll(fazenda_id, "historico_correcoes").add({
+            "operacao":       operacao,
+            "detalhe":        detalhe,
+            "registrado_por": registrado_por,
+            "ts":             datetime.datetime.now().isoformat(),
+        })
+    except Exception as e:
+        log.warning(f"_log_correcao erro: {e}")
 
 
 def _criar_fazenda_whatsapp(tel: str, email: str, nome_fazenda: str, nome_pessoa: str = ""):
@@ -3974,7 +4045,7 @@ async def webhook_evolution(request: Request):
         _aio.create_task(_aio.to_thread(_enviar_typing, tel_limpo, 6000))
         # Roda em thread para não bloquear o event loop (Firestore + httpx síncronos)
         resposta = await _aio.to_thread(_processar, tel_limpo, texto_final, fazenda_id, permissoes)
-        if resposta != "__botoes_enviados__":
+        if resposta and resposta != "__botoes_enviados__":
             await _aio.to_thread(_enviar_whatsapp, tel_limpo, resposta)
 
     _asyncio_fila.create_task(_processar_e_enviar())
