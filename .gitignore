@@ -6,6 +6,7 @@ __pycache__/
 bot_log.txt
 .claude/
 deploy/.env
+deploy/evolution.env
 *.key
 *.pem
 

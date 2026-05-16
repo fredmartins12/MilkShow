@@ -1,7 +1,8 @@
-version: "3.8"
+version: "3.9"
 
-# Evolution API + Redis + PostgreSQL
-# MilkShow bot roda como serviço systemd (fora do Docker)
+# Evolution API v2 + PostgreSQL + Redis
+# evolution.env é gerado pelo migrate_to_v2.sh (nunca commitado)
+# deploy/.env deve conter: POSTGRES_PASSWORD
 
 services:
 
@@ -34,7 +35,7 @@ services:
       retries: 3
 
   evolution:
-    image: evoapicloud/evolution-api:v2.3.7
+    image: evoapicloud/evolution-api:latest
     container_name: milkshow_evolution
     restart: always
     ports:
@@ -44,57 +45,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    environment:
-      # — Servidor —
-      SERVER_URL: "${EVOLUTION_PUBLIC_URL}"
-      # — Autenticação —
-      AUTHENTICATION_TYPE: apikey
-      AUTHENTICATION_API_KEY: "${EVOLUTION_KEY}"
-      AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "true"
-      # — Banco de dados —
-      DATABASE_ENABLED: "true"
-      DATABASE_PROVIDER: "postgresql"
-      DATABASE_CONNECTION_URI: "postgresql://evolution:${POSTGRES_PASSWORD}@postgres:5432/evolution"
-      DATABASE_CONNECTION_CLIENT_NAME: "evolution_client"
-      DATABASE_SAVE_DATA_INSTANCE: "true"
-      DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
-      DATABASE_SAVE_MESSAGE_UPDATE: "true"
-      DATABASE_SAVE_DATA_CONTACTS: "true"
-      DATABASE_SAVE_DATA_CHATS: "true"
-      DATABASE_SAVE_DATA_LABELS: "true"
-      DATABASE_SAVE_DATA_HISTORIC: "true"
-      # — Redis —
-      CACHE_REDIS_ENABLED: "true"
-      CACHE_REDIS_URI: "redis://redis:6379/6"
-      CACHE_REDIS_TTL: "604800"
-      CACHE_LOCAL_ENABLED: "false"
-      # — Webhook global (aponta para o bot) —
-      WEBHOOK_GLOBAL_URL: "${BOT_URL}/webhook/evolution"
-      WEBHOOK_GLOBAL_ENABLED: "true"
-      WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS: "false"
-      WEBHOOK_EVENTS_MESSAGES_UPSERT: "true"
-      WEBHOOK_EVENTS_MESSAGES_UPDATE: "false"
-      WEBHOOK_EVENTS_SEND_MESSAGE: "false"
-      WEBHOOK_EVENTS_QRCODE_UPDATED: "false"
-      WEBHOOK_EVENTS_CONNECTION_UPDATE: "false"
-      # — Instância padrão —
-      DEL_INSTANCE: "false"
-      # — WhatsApp —
-      WA_BUSINESS_TOKEN_WEBHOOK: "false"
-      CONFIG_SESSION_PHONE_CLIENT: "MilkShow"
-      CONFIG_SESSION_PHONE_NAME: "Chrome"
-      # Não fixar CONFIG_SESSION_PHONE_VERSION — Evolution detecta automaticamente
-      # — Armazenamento —
-      STORE_CLEANING_INTERVAL: "7200"
-      STORE_MESSAGES: "true"
-      STORE_MESSAGE_UP: "true"
-      STORE_CONTACTS: "true"
+    # env_file injeta vars diretamente no processo (evita bug de override interno)
+    env_file:
+      - evolution.env
     volumes:
-      - evolution_data:/evolution/instances
-      - evolution_store:/evolution/store
+      - evolution_instances:/evolution/instances
 
 volumes:
   postgres_data:
   redis_data:
-  evolution_data:
-  evolution_store:
+  evolution_instances:
