@@ -2925,6 +2925,7 @@ def _enviar_evolution(para: str, mensagem: str) -> bool:
     Configura: EVOLUTION_URL=http://seu-servidor:8080
                EVOLUTION_KEY=sua-api-key
                EVOLUTION_INSTANCE=nome-da-instancia
+    Suporta Evolution v1 e v2 (tenta ambos os formatos).
     """
     url      = os.environ.get("EVOLUTION_URL", "")
     api_key  = os.environ.get("EVOLUTION_KEY", "")
@@ -2933,26 +2934,40 @@ def _enviar_evolution(para: str, mensagem: str) -> bool:
         return False
     try:
         import httpx as _hx
-        # Usa o JID original se disponível (LIDs do novo WhatsApp não têm prefixo 55)
+        base = url.rstrip("/")
+        hdrs = {"apikey": api_key, "Content-Type": "application/json"}
+
+        # Monta lista de candidatos: JID original (@lid ou @s.whatsapp.net) + número limpo
         jid_original = _JID_CACHE.get(para, "")
+        num = re.sub(r'\D', '', para)
+        if not num.startswith('55'):
+            num = '55' + num
+
+        candidatos = []
+        # Prioridade 1: JID original completo (inclui @lid para iPhones)
         if jid_original:
-            candidatos = [jid_original]
-        else:
-            num = re.sub(r'\D', '', para)
-            if not num.startswith('55'):
-                num = '55' + num
-            candidatos = [num]
+            candidatos.append(jid_original)
+        # Prioridade 2: número limpo
+        candidatos.append(num)
+        # Prioridade 3: variante sem nono dígito (ex: 5577981258479)
+        if len(num) == 13:
+            candidatos.append(num[:4] + num[5:])
+
+        endpoint = f"{base}/message/sendText/{instance}"
         for candidato in candidatos:
-            r = _hx.post(
-                f"{url.rstrip('/')}/message/sendText/{instance}",
-                headers={"apikey": api_key, "Content-Type": "application/json"},
-                json={"number": candidato, "text": mensagem, "delay": 300},
-                timeout=15,
-            )
-            if r.status_code in (200, 201):
-                log.info(f"Evolution → {para}: OK (via {candidato})")
-                return True
-        log.info(f"Evolution → {para}: FALHOU {r.status_code}")
+            # Tenta formato Evolution v2: {"number": ..., "text": ...}
+            for payload in [
+                {"number": candidato, "text": mensagem, "delay": 300},
+                {"number": candidato, "options": {"delay": 300}, "textMessage": {"text": mensagem}},
+            ]:
+                r = _hx.post(endpoint, headers=hdrs, json=payload, timeout=15)
+                if r.status_code in (200, 201):
+                    log.info(f"Evolution → {para}: OK (via {candidato})")
+                    return True
+                if r.status_code not in (400, 404, 422):
+                    # Erro inesperado — não tenta mais variantes de payload
+                    break
+        log.info(f"Evolution → {para}: FALHOU (último status {r.status_code})")
         return False
     except Exception as e:
         log.warning(f"Evolution falhou: {e}")
@@ -3609,8 +3624,8 @@ async def webhook_evolution(request: Request):
     """Webhook da Evolution API (self-hosted, grátis).
     Configure no painel Evolution: POST https://seu-dominio/webhook/evolution
     """
-    # Valida apikey enviada pela Evolution no header
-    ev_key = os.environ.get("EVOLUTION_KEY", "")
+    # Valida apikey enviada pela Evolution no header (usa EVOLUTION_WEBHOOK_KEY se definida)
+    ev_key = os.environ.get("EVOLUTION_WEBHOOK_KEY", "")
     if ev_key:
         apikey_header = request.headers.get("apikey", "")
         if apikey_header != ev_key:
@@ -3647,9 +3662,10 @@ async def webhook_evolution(request: Request):
     if remote.endswith("@g.us"):
         return {"ok": True}
 
-    tel_raw   = remote.split("@")[0]        # extrai só o número
+    # Extrai número — para LIDs usa o JID completo (Evolution v1 tenta enviar assim)
+    tel_raw   = remote.split("@")[0]
     tel_limpo = _normalizar_tel(tel_raw)
-    # Guarda o JID original para usar no envio (LIDs do novo WhatsApp)
+    # Guarda o JID original para usar no envio
     _JID_CACHE[tel_limpo] = remote
 
     # Extrai texto (suporta conversation e extendedTextMessage)
