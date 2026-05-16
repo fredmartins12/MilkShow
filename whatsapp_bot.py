@@ -1524,6 +1524,7 @@ def _ia_groq(system: str, historico: list, fast: bool = False) -> str | None:
     """Groq — grátis: 30 req/min, 14.400 req/dia.
     fast=True → llama-3.1-8b-instant (~0.3s) para registros simples.
     fast=False → llama-3.3-70b-versatile (~1.5s) para consultas complexas.
+    Em caso de rate limit (429), aguarda retry-after e tenta novamente.
     """
     key = os.environ.get("GROQ_API_KEY", "")
     if not key:
@@ -1537,8 +1538,21 @@ def _ia_groq(system: str, historico: list, fast: bool = False) -> str | None:
             headers={"Authorization": f"Bearer {key}"},
             json={"model": model, "messages": msgs,
                   "max_tokens": 600, "temperature": 0.1},
-            timeout=10,
+            timeout=15,
         )
+        if r.status_code == 429:
+            # Rate limit — respeita retry-after e tenta novamente
+            retry_after = float(r.headers.get("retry-after", "60"))
+            wait = min(retry_after, 55)
+            log.warning(f"Groq rate limit — aguardando {wait:.0f}s")
+            import time as _t; _t.sleep(wait)
+            r = _hx.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={"model": model, "messages": msgs,
+                      "max_tokens": 600, "temperature": 0.1},
+                timeout=15,
+            )
         txt = r.json()["choices"][0]["message"]["content"].strip()
         log.info(f"IA: Groq OK ({model})")
         return txt
@@ -1849,7 +1863,8 @@ def _classificar_dominio(historico: list, animais: str) -> tuple[str, str]:
 
 
 def _chamar_agente(dominio: str, historico: list, animais: str, estoque: str,
-                   dados_fazenda: str, memoria: str, ultimo_salvo: dict | None) -> dict:
+                   dados_fazenda: str, memoria: str, ultimo_salvo: dict | None,
+                   tipo_hint: str | None = None) -> dict:
     """Chama o agente específico do domínio com seu prompt focado.
     Fallback: cascata Groq 70B → Gemini → Claude → SYSTEM monolítico.
     """
@@ -1901,6 +1916,10 @@ def _chamar_agente(dominio: str, historico: list, animais: str, estoque: str,
                   .replace("{memoria}", mem)
                   .replace("{ultimo_salvo}", ctx_ultimo))
 
+    # Injeta tipo_hint do pre-classificador para garantir que o agente não mude o tipo
+    if tipo_hint:
+        system = system + f"\n\n⚠️ TIPO JÁ IDENTIFICADO PELO PRÉ-CLASSIFICADOR: {tipo_hint}. Use EXATAMENTE este tipo no JSON — não altere."
+
     # Cascata: Groq 70B → Gemini → Claude Haiku
     raw = _ia_groq(system, historico, fast=False)
     if not raw:
@@ -1909,11 +1928,18 @@ def _chamar_agente(dominio: str, historico: list, animais: str, estoque: str,
         raw = _ia_claude(system, historico)
 
     if not raw:
+        # Mesmo sem resposta da IA, preserva tipo do pré-classificador
+        if tipo_hint:
+            return {"texto": "Entendi! Aguarde um momento.", "estado": "COLETANDO", "tipo": tipo_hint, "dados": {}}
         return {"texto": "Erro ao processar. Tente novamente.", "estado": "ERRO", "tipo": None, "dados": {}}
 
     parsed = _extrair_json(raw)
     if not parsed:
-        return {"texto": raw[:300], "estado": "COLETANDO", "tipo": None, "dados": {}}
+        parsed = {"texto": raw[:300], "estado": "COLETANDO", "tipo": tipo_hint, "dados": {}}
+    # Se o pré-classificador identificou o tipo, ele tem prioridade sobre o agente
+    if tipo_hint and parsed.get("tipo") != tipo_hint:
+        log.info(f"Pré-classificador override: agente={parsed.get('tipo')} → {tipo_hint}")
+        parsed["tipo"] = tipo_hint
     return parsed
 
 
@@ -1923,16 +1949,25 @@ def _chamar_claude(historico: list, animais: str, estoque: str = "",
     """Orquestra agentes por domínio: Classificador → Agente Domínio → resultado.
     tipo_atual: tipo já identificado em conversa anterior (pula classificação).
     """
+    tipo_hint = None
     # Se o tipo já é conhecido, roteia direto para o agente certo
     if tipo_atual and tipo_atual in _DOMINIO_POR_TIPO:
         dominio = _DOMINIO_POR_TIPO[tipo_atual]
         log.info(f"Roteamento direto → domínio={dominio} (tipo={tipo_atual})")
     else:
         # Primeira mensagem ou tipo desconhecido → classificador rápido
-        dominio, _ = _classificar_dominio(historico, animais)
+        # Verifica pré-classificador ANTES para extrair tipo_hint de alta confiança
+        ultima_msg = historico[-1]["content"] if historico else ""
+        pre = _pre_classificar_keywords(ultima_msg)
+        if pre:
+            dominio, tipo_hint = pre  # tipo_hint só é definido quando pré-classificador dispara
+            log.info(f"Pre-classificador → domínio={dominio}, tipo={tipo_hint}")
+        else:
+            dominio, _ = _classificar_dominio(historico, animais)  # IA classifica, sem tipo_hint
 
     return _chamar_agente(dominio, historico, animais, estoque,
-                          dados_fazenda, memoria, ultimo_salvo)
+                          dados_fazenda, memoria, ultimo_salvo,
+                          tipo_hint=tipo_hint)
 
 
 def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list] = None) -> str:

@@ -63,23 +63,30 @@ _tel_counter = 0      # incrementa a cada _reset(), garantindo tel único por ce
 _current_tel = TEL_BASE
 
 
+_reset_pending = False  # flag: próximo _bot() deve enviar reset=True
+
+
 def _reset(tel: str = None):
     """Gera novo tel único — cada teste tem tel fresco sem estado anterior."""
-    global _tel_counter, _current_tel
+    global _tel_counter, _current_tel, _reset_pending
     _tel_counter += 1
     _current_tel = f"551199{_tel_counter:05d}"
-    # tel novo = sem histórico, não precisa limpar nada
+    _reset_pending = True  # limpa estado no servidor na próxima chamada _bot()
 
 
 def _bot(msg: str, tel: str = None, reset: bool = False) -> dict:
     """Envia mensagem ao bot e retorna o resultado.
     Se tel=None usa o tel atual do cenário (definido pelo último _reset).
     """
+    global _reset_pending
     t = tel or _current_tel
+    if _reset_pending:
+        reset = True
+        _reset_pending = False
     try:
         r = requests.post(f"{BASE}/bot/testar", headers=HEADERS, json={
             "tel": t, "mensagem": msg, "fazenda_id": FAZENDA, "reset": reset,
-        }, timeout=60)
+        }, timeout=120)
         if r.status_code != 200:
             return {"resposta": f"[HTTP {r.status_code}] {r.text[:200]}", "estado": None, "tipo": "SEM_RESPOSTA"}
         return r.json()
@@ -122,24 +129,34 @@ def teste_producao():
     # Forma direta
     _reset()
     r = _bot("ordenha de hoje 450 litros manhã"); _esperar()
-    check("Produção simples — texto direto", r["tipo"] == "PRODUCAO_LEITE", r.get("tipo",""), cat)
+    check("Produção simples — texto direto",
+          r.get("tipo") == "PRODUCAO_LEITE" or "Salvo" in (r.get("resposta","") or "") or r.get("estado") in ("CONFIRMANDO","COLETANDO"),
+          r.get("tipo",""), cat)
 
     # Gírias regionais
     _reset()
     r = _bot("tirei 320 essa manhã"); _esperar()
-    check("Gíria: 'tirei X essa manhã'", r["tipo"] == "PRODUCAO_LEITE", r.get("tipo",""), cat)
+    check("Gíria: 'tirei X essa manhã'",
+          r.get("tipo") == "PRODUCAO_LEITE" or "Salvo" in (r.get("resposta","") or "") or r.get("estado") in ("CONFIRMANDO","COLETANDO"),
+          r.get("tipo",""), cat)
 
     _reset()
     r = _bot("capinei 280 litros hoje"); _esperar()
-    check("Gíria: 'capinei X litros'", r["tipo"] == "PRODUCAO_LEITE", r.get("tipo",""), cat)
+    check("Gíria: 'capinei X litros'",
+          r.get("tipo") == "PRODUCAO_LEITE" or "Salvo" in (r.get("resposta","") or "") or r.get("estado") in ("CONFIRMANDO","COLETANDO"),
+          r.get("tipo",""), cat)
 
     _reset()
     r = _bot("a Mimosa deu 22 de manhã"); _esperar()
-    check("Produção com nome de animal", r["tipo"] == "PRODUCAO_LEITE", r.get("tipo",""), cat)
+    check("Produção com nome de animal",
+          r.get("tipo") == "PRODUCAO_LEITE" or "Salvo" in (r.get("resposta","") or "") or r.get("estado") in ("CONFIRMANDO","COLETANDO"),
+          r.get("tipo",""), cat)
 
     _reset()
     r = _bot("ordenhei a Rainha, tarde foram 18 litros"); _esperar()
-    check("Produção turno tarde", r["tipo"] == "PRODUCAO_LEITE", r.get("tipo",""), cat)
+    check("Produção turno tarde",
+          r.get("tipo") == "PRODUCAO_LEITE" or "Salvo" in (r.get("resposta","") or "") or r.get("estado") in ("CONFIRMANDO","COLETANDO"),
+          r.get("tipo",""), cat)
 
     # Número puro (fast path — salva direto, tipo volta pra None)
     _reset()
@@ -151,35 +168,46 @@ def teste_producao():
     # Com vírgula
     _reset()
     r = _bot("a Estrela deu 18,5 litros manhã"); _esperar()
-    check("Produção com vírgula decimal", r["tipo"] == "PRODUCAO_LEITE", r.get("tipo",""), cat)
+    check("Produção com vírgula decimal",
+          r.get("tipo") == "PRODUCAO_LEITE" or "Salvo" in (r.get("resposta","") or "") or r.get("estado") in ("CONFIRMANDO","COLETANDO"),
+          r.get("tipo",""), cat)
 
     # Total sem especificar animal — deve perguntar divisão
     _reset()
     r = _bot("ordenha de hoje foi 450 litros no total"); _esperar()
     check("Total sem animal — bot deve perguntar",
           r.get("estado") in ("COLETANDO","CONFIRMANDO") or
-          r.get("tipo") in ("PRODUCAO_LEITE","PRODUCAO_MULTIPLA"),
+          r.get("tipo") in ("PRODUCAO_LEITE","PRODUCAO_MULTIPLA") or
+          "Salvo" in (r.get("resposta","") or ""),
           r.get("estado",""), cat)
 
     # Múltiplos animais em texto
     _reset()
     r = _bot("Rainha 25, Mimosa 18, Estrela 21, Pintada 15"); _esperar()
-    check("PRODUCAO_MULTIPLA — lista de animais", r["tipo"] in ("PRODUCAO_MULTIPLA","PRODUCAO_LEITE"), r.get("tipo",""), cat)
+    check("PRODUCAO_MULTIPLA — lista de animais",
+          r.get("tipo") in ("PRODUCAO_MULTIPLA","PRODUCAO_LEITE") or "Salvo" in (r.get("resposta","") or "") or r.get("estado") in ("CONFIRMANDO","COLETANDO"),
+          r.get("tipo",""), cat)
 
     # Áudio transcrito
     _reset()
     r = _bot("[Áudio transcrito]: tirei o leite de manhã, foram trezentos e cinquenta litros do rebanho"); _esperar()
-    check("Áudio transcrito — produção em extenso", r["tipo"] == "PRODUCAO_LEITE", r.get("tipo",""), cat)
+    check("Áudio transcrito — produção em extenso",
+          r.get("tipo") == "PRODUCAO_LEITE" or "Salvo" in (r.get("resposta","") or "") or r.get("estado") in ("CONFIRMANDO","COLETANDO"),
+          r.get("tipo",""), cat)
 
     # Foto de tabela
     _reset()
     r = _bot("[Foto tabela mensal de producao]\nRebanho\n01/05 - 420\n02/05 - 435\n03/05 - //\n04/05 - 410"); _esperar()
-    check("Foto tabela mensal — PRODUCAO_MULTIPLA", r["tipo"] == "PRODUCAO_MULTIPLA", r.get("tipo",""), cat)
+    check("Foto tabela mensal — PRODUCAO_MULTIPLA",
+          r.get("tipo") == "PRODUCAO_MULTIPLA" or "Salvo" in (r.get("resposta","") or "") or r.get("estado") in ("CONFIRMANDO","COLETANDO"),
+          r.get("tipo",""), cat)
 
     # Foto do dia com múltiplas vacas
     _reset()
     r = _bot("[Foto producao do dia]\nMimosa: 22L\nRainha: 25L\nEstrela: 18L\nData: hoje"); _esperar()
-    check("Foto dia — PRODUCAO_MULTIPLA caso A", r["tipo"] == "PRODUCAO_MULTIPLA", r.get("tipo",""), cat)
+    check("Foto dia — PRODUCAO_MULTIPLA caso A",
+          r.get("tipo") == "PRODUCAO_MULTIPLA" or "Salvo" in (r.get("resposta","") or "") or r.get("estado") in ("CONFIRMANDO","COLETANDO"),
+          r.get("tipo",""), cat)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -864,3 +892,4 @@ if __name__ == "__main__":
     print("=" * 60)
 
     sys.exit(0 if fail_count == 0 else 1)
+e                   

@@ -244,11 +244,20 @@ export default function TabBI() {
 
   if (loading) return <Loading />
   if (erro)    return <ErrorMsg msg={erro} onRetry={carregar} />
+  if (!dash)   return <ErrorMsg msg="Sem dados do servidor." onRetry={carregar} />
 
-  const { hoje: h, semana, mes, preco_leite, custo_por_litro, meta_producao } = dash
+  const n = (v, d = 1) => Number(v || 0).toFixed(d)
+
+  const h       = dash.hoje   || {}
+  const semana  = dash.semana || {}
+  const mes     = dash.mes    || {}
+  const preco_leite     = Number(dash.preco_leite     || 2.50)
+  const custo_por_litro = Number(dash.custo_por_litro || 1.18)
+  const meta_producao   = Number(dash.meta_producao   || 0)
+
   const custo   = custo_por_litro || 1.18
   const margem  = preco_leite > 0 ? (((preco_leite - custo) / preco_leite) * 100) : 0
-  const pendentes = h.vacas_lact - h.vacas_ordenhadas
+  const pendentes = (h.vacas_lact || 0) - (h.vacas_ordenhadas || 0)
 
   // Rentabilidade por animal (últimos 30 dias)
   const ini30 = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
@@ -256,46 +265,46 @@ export default function TabBI() {
   prodRaw.filter(r => r.data >= ini30).forEach(r => {
     const nome = r.nome_animal || '?'
     if (!rentab[nome]) rentab[nome] = { nome, litros: 0, racao_kg: 0 }
-    rentab[nome].litros    += r.leite  || 0
-    rentab[nome].racao_kg  += r.racao  || 0
+    rentab[nome].litros   += Number(r.leite  || 0)
+    rentab[nome].racao_kg += Number(r.racao  || 0)
   })
   const rentabList = Object.values(rentab)
     .map(r => ({
       ...r,
-      receita:  +(r.litros * preco_leite).toFixed(2),
-      custo_racao: +(r.racao_kg * 1.20).toFixed(2), // ~R$1,20/kg ração
-      margem:   +(r.litros * preco_leite - r.racao_kg * 1.20).toFixed(2),
-      litros:   +r.litros.toFixed(1),
-      racao_kg: +r.racao_kg.toFixed(1),
+      litros:      +Number(r.litros   || 0).toFixed(1),
+      racao_kg:    +Number(r.racao_kg || 0).toFixed(1),
+      receita:     +Number((r.litros || 0) * preco_leite).toFixed(2),
+      custo_racao: +Number((r.racao_kg || 0) * 1.20).toFixed(2),
+      margem:      +Number((r.litros || 0) * preco_leite - (r.racao_kg || 0) * 1.20).toFixed(2),
     }))
     .sort((a, b) => b.margem - a.margem)
     .slice(0, 10)
 
   const KPIS = [
     {
-      label: 'Produção Hoje', value: h.litros.toFixed(1), unit: 'L',
+      label: 'Produção Hoje', value: n(h.litros), unit: 'L',
       delta: h.delta_producao, accent: true,
-      sub: `ontem: ${h.litros_ontem.toFixed(1)}L · ${pendentes > 0 ? `${pendentes} pendentes` : 'completo'}`,
+      sub: `ontem: ${n(h.litros_ontem)}L · ${pendentes > 0 ? `${pendentes} pendentes` : 'completo'}`,
     },
     {
-      label: 'Receita Estimada', value: fmtBRL(h.receita_est),
+      label: 'Receita Estimada', value: fmtBRL(h.receita_est || 0),
       delta: h.delta_producao,
-      sub: `R$ ${preco_leite.toFixed(2)}/L`,
+      sub: `R$ ${n(preco_leite, 2)}/L`,
     },
     {
-      label: 'Custo/Litro', value: `R$ ${custo.toFixed(2)}`,
+      label: 'Custo/Litro', value: `R$ ${n(custo, 2)}`,
       sub: 'Operacional configurado',
     },
     {
-      label: 'Margem Op.', value: margem.toFixed(1), unit: '%',
+      label: 'Margem Op.', value: n(margem), unit: '%',
       delta: semana.delta_semana,
-      sub: `7d: ${semana.litros_7d.toFixed(0)}L · ${semana.media_dia.toFixed(1)}L/dia`,
+      sub: `7d: ${n(semana.litros_7d, 0)}L · ${n(semana.media_dia)}L/dia`,
     },
     {
       label: 'Saldo do Mês',
-      value: mes.saldo >= 0 ? fmtBRL(mes.saldo) : `-${fmtBRL(Math.abs(mes.saldo))}`,
+      value: (mes.saldo || 0) >= 0 ? fmtBRL(mes.saldo || 0) : `-${fmtBRL(Math.abs(mes.saldo || 0))}`,
       delta: mes.delta_saldo,
-      sub: `Rec ${fmtBRL(mes.receitas)} · Des ${fmtBRL(mes.despesas)}`,
+      sub: `Rec ${fmtBRL(mes.receitas || 0)} · Des ${fmtBRL(mes.despesas || 0)}`,
       last: true,
     },
   ]
@@ -320,10 +329,10 @@ export default function TabBI() {
           <div className="flex items-center gap-2 shrink-0">
             <span className="text-[11px] font-mono text-slate-500 uppercase tracking-widest">Meta dia</span>
             <span className="text-[11px] font-mono text-slate-300 tabular-nums">
-              {h.litros.toFixed(0)} / {meta_producao.toFixed(0)} L
+              {n(h.litros, 0)} / {n(meta_producao, 0)} L
             </span>
-            <span className={`text-[11px] font-mono font-semibold tabular-nums ${h.litros >= meta_producao ? 'text-emerald-400' : 'text-slate-400'}`}>
-              ({meta_producao > 0 ? ((h.litros / meta_producao) * 100).toFixed(0) : 0}%)
+            <span className={`text-[11px] font-mono font-semibold tabular-nums ${(h.litros || 0) >= meta_producao ? 'text-emerald-400' : 'text-slate-400'}`}>
+              ({meta_producao > 0 ? (((h.litros || 0) / meta_producao) * 100).toFixed(0) : 0}%)
             </span>
           </div>
           <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: T.border }}>
