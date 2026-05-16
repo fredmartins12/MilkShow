@@ -9,20 +9,31 @@ set -e
 APP_DIR="/opt/milkshow"
 DEPLOY_DIR="$APP_DIR/deploy"
 
+# Compatibilidade docker compose / docker-compose
+if docker compose version &>/dev/null 2>&1; then
+    DC="docker compose"
+elif command -v docker-compose &>/dev/null; then
+    DC="docker-compose"
+else
+    echo "ERRO: docker compose não encontrado. Instale Docker primeiro."
+    exit 1
+fi
+
 # ── Carrega .env do bot ───────────────────────────────────────
 set -a; source "$APP_DIR/.env" 2>/dev/null || true; set +a
 
 INSTANCE="${EVOLUTION_INSTANCE:-milkshow}"
 EV_KEY="${EVOLUTION_KEY:-milkshow2024}"
 PG_PASS="${POSTGRES_PASSWORD:-milkshow2024pg}"
+IP_PUB=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || echo "178.104.252.193")
 
 echo "================================================="
 echo " MilkShow — Setup Evolution API v2"
 echo " Instância : $INSTANCE"
-echo " Servidor  : $(curl -s ifconfig.me 2>/dev/null || echo 'desconhecido')"
+echo " IP público: $IP_PUB"
 echo "================================================="
 
-# ── 1. Garante dependências ───────────────────────────────────
+# ── 1. Garante Docker ────────────────────────────────────────
 echo ""
 echo "[1/7] Verificando Docker..."
 if ! command -v docker &>/dev/null; then
@@ -30,7 +41,7 @@ if ! command -v docker &>/dev/null; then
     curl -fsSL https://get.docker.com | sh
 fi
 
-# ── 2. Para e remove containers antigos ──────────────────────
+# ── 2. Para containers antigos ───────────────────────────────
 echo "[2/7] Parando containers antigos..."
 docker stop milkshow_evolution milkshow_postgres milkshow_redis 2>/dev/null || true
 docker rm   milkshow_evolution milkshow_postgres milkshow_redis 2>/dev/null || true
@@ -38,29 +49,25 @@ docker rm   milkshow_evolution milkshow_postgres milkshow_redis 2>/dev/null || t
 # ── 3. Garante variáveis no .env do bot ──────────────────────
 echo "[3/7] Atualizando .env do bot..."
 if ! grep -q "^POSTGRES_PASSWORD" "$APP_DIR/.env"; then
-    echo ""                                    >> "$APP_DIR/.env"
-    echo "# PostgreSQL — Evolution API v2"     >> "$APP_DIR/.env"
-    echo "POSTGRES_PASSWORD=$PG_PASS"          >> "$APP_DIR/.env"
+    printf "\n# PostgreSQL — Evolution API v2\nPOSTGRES_PASSWORD=%s\n" "$PG_PASS" >> "$APP_DIR/.env"
     echo "   POSTGRES_PASSWORD adicionado"
 fi
 if ! grep -q "^BOT_URL" "$APP_DIR/.env"; then
-    echo "BOT_URL=http://172.17.0.1:8000"      >> "$APP_DIR/.env"
+    printf "BOT_URL=http://172.17.0.1:8000\n" >> "$APP_DIR/.env"
     echo "   BOT_URL adicionado (Docker bridge → host)"
 fi
 
 # Recarrega com os novos valores
 set -a; source "$APP_DIR/.env"; set +a
 PG_PASS="${POSTGRES_PASSWORD:-milkshow2024pg}"
-IP_PUB=$(curl -s ifconfig.me 2>/dev/null || echo "178.104.252.193")
 
-# ── 4. Gera deploy/.env (para postgres no docker-compose) ────
+# ── 4. Gera deploy/.env (POSTGRES_PASSWORD para docker-compose) ─
 echo "[4/7] Gerando arquivos de configuração..."
-echo "POSTGRES_PASSWORD=$PG_PASS" > "$DEPLOY_DIR/.env"
+printf "POSTGRES_PASSWORD=%s\n" "$PG_PASS" > "$DEPLOY_DIR/.env"
 
-# ── 5. Gera evolution.env (lido pelo container via env_file) ──
+# ── 5. Gera evolution.env (env_file do container Evolution) ──
 cat > "$DEPLOY_DIR/evolution.env" << ENVEOF
-# ── Gerado por migrate_to_v2.sh — NÃO editar manualmente ──
-# Regenere executando: bash /opt/milkshow/deploy/migrate_to_v2.sh
+# Gerado por migrate_to_v2.sh — nao editar manualmente
 
 SERVER_URL=http://${IP_PUB}:8080
 
@@ -105,8 +112,8 @@ echo "   evolution.env gerado"
 # ── 6. Sobe containers ────────────────────────────────────────
 echo "[5/7] Iniciando PostgreSQL + Redis + Evolution API v2..."
 cd "$DEPLOY_DIR"
-docker compose pull --quiet 2>&1 | tail -3
-docker compose up -d
+$DC pull --quiet 2>&1 | tail -3
+$DC up -d
 
 echo ""
 echo "   Aguardando Evolution API inicializar (até 90s)..."
@@ -114,29 +121,28 @@ READY=0
 for i in $(seq 1 30); do
     CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8080/" 2>/dev/null || echo "000")
     if [ "$CODE" != "000" ]; then
-        echo "   Evolution pronto (HTTP $CODE) após ${i}0s aprox."
+        echo "   Evolution pronto (HTTP $CODE)"
         READY=1
         break
     fi
     printf "   %ds..." "$((i * 3))"
     sleep 3
 done
+echo ""
 
 if [ "$READY" = "0" ]; then
+    echo "   AVISO: Evolution nao respondeu em 90s. Logs:"
+    docker logs milkshow_evolution --tail 30 2>/dev/null || true
     echo ""
-    echo "   AVISO: Evolution não respondeu após 90s. Verificando logs..."
-    docker logs milkshow_evolution --tail 20 2>/dev/null || true
-    echo ""
-    echo "   Aguarde mais 30s e re-execute o script."
+    echo "   Aguarde 30s e re-execute o script."
     exit 1
 fi
 
-sleep 5  # tempo extra para banco de dados migrar
+sleep 5  # banco de dados precisa de tempo para migrar schema
 
 # ── 7. Cria instância e gera QR ──────────────────────────────
 echo "[6/7] Configurando instância WhatsApp..."
 
-# Verifica se já existe
 INST_JSON=$(curl -s "http://localhost:8080/instance/fetchInstances" \
     -H "apikey: $EV_KEY" 2>/dev/null || echo "[]")
 COUNT=$(echo "$INST_JSON" | python3 -c \
@@ -144,29 +150,34 @@ COUNT=$(echo "$INST_JSON" | python3 -c \
 
 if [ "$COUNT" = "0" ]; then
     echo "   Criando instância '$INSTANCE'..."
-    CREATE=$(curl -s -X POST "http://localhost:8080/instance/create" \
+    curl -s -X POST "http://localhost:8080/instance/create" \
         -H "apikey: $EV_KEY" \
         -H "Content-Type: application/json" \
         -d "{\"instanceName\":\"$INSTANCE\",\"qrcode\":true,\"integration\":\"WHATSAPP-BAILEYS\"}" \
-        2>/dev/null || echo "{}")
-    echo "   Criação: $(echo "$CREATE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('instance',{}).get('state','?'))" 2>/dev/null || echo 'resposta inválida')"
+        2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print('   Estado:', (d.get('instance') or {}).get('state','?'))" 2>/dev/null || true
     sleep 5
 else
     echo "   Instância '$INSTANCE' já existe"
 fi
 
-echo "[7/7] Gerando QR code para conexão WhatsApp..."
+echo "[7/7] Gerando QR code..."
 sleep 3
-QR_JSON=$(curl -s "http://localhost:8080/instance/connect/$INSTANCE" \
-    -H "apikey: $EV_KEY" 2>/dev/null || echo "{}")
 
-python3 << PYEOF
+# Salva JSON em arquivo temporário (evita problemas com aspas na variável bash)
+QR_FILE="/tmp/qr_response.json"
+curl -s "http://localhost:8080/instance/connect/$INSTANCE" \
+    -H "apikey: $EV_KEY" -o "$QR_FILE" 2>/dev/null || echo "{}" > "$QR_FILE"
+
+python3 - "$QR_FILE" "$IP_PUB" << 'PYEOF'
 import sys, json, base64
 
-raw = """$QR_JSON"""
+qr_file = sys.argv[1]
+ip_pub  = sys.argv[2]
+
 try:
-    data = json.loads(raw)
-except:
+    with open(qr_file) as f:
+        data = json.load(f)
+except Exception:
     data = {}
 
 state  = (data.get("instance") or {}).get("state") or data.get("state") or data.get("status") or ""
@@ -180,13 +191,14 @@ if state in ("open", "connected", "online"):
 elif qr_b64:
     try:
         img = base64.b64decode(qr_b64.split(",")[-1])
-        with open("/tmp/qr_milkshow.png", "wb") as f:
+        out = "/tmp/qr_milkshow.png"
+        with open(out, "wb") as f:
             f.write(img)
         print("")
         print("========================================")
-        print("  QR salvo em /tmp/qr_milkshow.png")
-        print("  Copie para seu PC e escaneie:")
-        print("  scp root@${IP_PUB}:/tmp/qr_milkshow.png .")
+        print("  QR salvo em " + out)
+        print("  Copie para seu PC:")
+        print("  scp root@" + ip_pub + ":/tmp/qr_milkshow.png .")
         print("")
         print("  No WhatsApp iPhone:")
         print("  Ajustes > Dispositivos vinculados")
@@ -195,25 +207,30 @@ elif qr_b64:
     except Exception as e:
         print("Erro ao salvar QR: " + str(e))
 else:
-    print("Estado atual: " + str(state) or str(data))
+    print("Estado atual: " + str(state or data))
     print("")
     print("Se Evolution ainda esta iniciando, aguarde 15s e execute:")
-    print("  curl -s http://localhost:8080/instance/connect/$INSTANCE -H 'apikey: $EV_KEY' | python3 -m json.tool")
+    print("  curl -s http://localhost:8080/instance/connect/" +
+          sys.argv[1].split("/")[-1].replace("qr_response.json","") +
+          "milkshow -H 'apikey: CHAVE' | python3 -m json.tool")
 PYEOF
 
 # ── 8. Reinicia o bot ────────────────────────────────────────
 echo ""
 echo "Reiniciando bot MilkShow..."
-systemctl restart milkshow-bot 2>/dev/null && sleep 2 && \
-    systemctl is-active --quiet milkshow-bot && echo "   Bot OK" || echo "   Verifique: journalctl -u milkshow-bot -n 20"
+systemctl restart milkshow-bot 2>/dev/null || true
+sleep 2
+systemctl is-active --quiet milkshow-bot \
+    && echo "   Bot: OK" \
+    || { echo "   Bot com erro — logs:"; journalctl -u milkshow-bot -n 15 --no-pager; }
 
 echo ""
 echo "================================================="
-echo " Pronto! Próximos passos:"
-echo " 1. Copie o QR:  scp root@${IP_PUB}:/tmp/qr_milkshow.png ."
+echo " Pronto!"
+echo " 1. scp root@${IP_PUB}:/tmp/qr_milkshow.png ."
 echo " 2. Escaneie no WhatsApp (Dispositivos vinculados)"
-echo " 3. Teste enviando 'oi' para o número do bot"
+echo " 3. Mande 'oi' pro bot e teste"
 echo ""
-echo " Logs do bot:       journalctl -u milkshow-bot -f"
-echo " Logs do Evolution: docker logs milkshow_evolution -f"
+echo " Logs bot:       journalctl -u milkshow-bot -f"
+echo " Logs Evolution: docker logs milkshow_evolution -f"
 echo "================================================="
