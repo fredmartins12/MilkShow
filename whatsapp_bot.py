@@ -3771,9 +3771,8 @@ async def webhook_evolution(request: Request):
                 google_key = os.environ.get("GOOGLE_API_KEY", "")
                 if google_key:
                     _candidates = [
-                        ("v1",     "gemini-2.0-flash-lite"),
-                        ("v1",     "gemini-2.0-flash"),
-                        ("v1beta", "gemini-2.0-flash"),
+                        ("v1", "gemini-2.5-flash"),
+                        ("v1", "gemini-2.5-flash-lite"),
                     ]
                     for _api_ver, _gmodel in _candidates:
                         try:
