@@ -7,7 +7,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1302,8 +1301,8 @@ body::before {
       <!-- QR Code -->
       <div style="padding:20px 24px;background:var(--surface);border:1px solid rgba(74,222,128,0.3);border-radius:16px;display:flex;flex-direction:column;align-items:center;gap:10px;min-width:170px;">
         <div style="font-size:10px;color:var(--green-l);font-family:'JetBrains Mono',monospace;letter-spacing:2px;text-transform:uppercase;">Teste Agora</div>
-        <div style="background:#fff;border-radius:10px;padding:8px;line-height:0;">
-          <canvas id="qrCanvas" width="120" height="120"></canvas>
+        <div style="background:#fff;border-radius:10px;padding:6px;line-height:0;">
+          <img id="qrImg" width="120" height="120" style="display:block;border-radius:6px;" alt="QR Code WhatsApp Bot" />
         </div>
         <div style="font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;text-align:center;">
           Escaneie com a câmera<br>e teste o bot no WhatsApp
@@ -1648,14 +1647,15 @@ function initFundChart() {
 let qrDone = false
 function initQR() {
   if (qrDone) return
-  const canvas = document.getElementById('qrCanvas')
-  if (!canvas || typeof QRCode === 'undefined') return
-  QRCode.toCanvas(canvas, BOT_WA_LINK, {
-    width: 120,
-    margin: 1,
-    color: { dark: '#030b14', light: '#ffffff' },
-    errorCorrectionLevel: 'M',
-  }, err => { if (!err) qrDone = true })
+  const img = document.getElementById('qrImg')
+  if (!img) return
+  const encoded = encodeURIComponent(BOT_WA_LINK)
+  img.src = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&margin=4&color=030b14&bgcolor=ffffff&data=${encoded}`
+  img.onerror = () => {
+    // fallback: google charts API
+    img.src = `https://chart.googleapis.com/chart?chs=120x120&cht=qr&chl=${encoded}&choe=UTF-8`
+  }
+  qrDone = true
 }
 
 // init first slide triggers
