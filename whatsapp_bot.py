@@ -1509,15 +1509,36 @@ _SECOES_POR_DOMINIO = {
 # Ordem: Groq (LLaMA grátis) → Gemini Flash (grátis) → Claude Haiku (pago)
 # ─────────────────────────────────────────────
 def _extrair_json(raw: str) -> dict:
-    """Extrai JSON do texto retornado pela IA, tolerante a texto extra."""
+    """Extrai JSON do texto retornado pela IA, tolerante a texto extra e truncamento."""
+    raw = raw.strip()
+    # Remove markdown code blocks se presentes
+    if raw.startswith("```"):
+        raw = re.sub(r'^```(?:json)?\s*', '', raw)
+        raw = re.sub(r'\s*```$', '', raw)
+        raw = raw.strip()
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        m = re.search(r'\{.*\}', raw, re.DOTALL)
+        pass
+    # Tenta encontrar JSON completo no texto
+    m = re.search(r'\{.*\}', raw, re.DOTALL)
+    if m:
         try:
-            return json.loads(m.group()) if m else {}
+            return json.loads(m.group())
         except Exception:
-            return {}
+            pass
+    # JSON truncado: extrai campos individualmente via regex
+    result = {}
+    for field in ("texto", "estado", "tipo"):
+        fm = re.search(rf'"{field}"\s*:\s*"((?:[^"\\]|\\.)*)"', raw)
+        if fm:
+            try:
+                result[field] = fm.group(1).encode().decode('unicode_escape')
+            except Exception:
+                result[field] = fm.group(1)
+    if result.get("texto"):
+        return result
+    return {}
 
 
 def _ia_groq(system: str, historico: list, fast: bool = False) -> str | None:
@@ -1530,6 +1551,7 @@ def _ia_groq(system: str, historico: list, fast: bool = False) -> str | None:
     if not key:
         return None
     model = "llama-3.1-8b-instant" if fast else "llama-3.3-70b-versatile"
+    max_tok = 400 if fast else 2000
     try:
         import httpx as _hx
         msgs = [{"role": "system", "content": system}] + historico[-8:]
@@ -1537,8 +1559,8 @@ def _ia_groq(system: str, historico: list, fast: bool = False) -> str | None:
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {key}"},
             json={"model": model, "messages": msgs,
-                  "max_tokens": 600, "temperature": 0.1},
-            timeout=15,
+                  "max_tokens": max_tok, "temperature": 0.1},
+            timeout=20,
         )
         if r.status_code == 429:
             # Rate limit — respeita retry-after e tenta novamente
@@ -1550,8 +1572,8 @@ def _ia_groq(system: str, historico: list, fast: bool = False) -> str | None:
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {key}"},
                 json={"model": model, "messages": msgs,
-                      "max_tokens": 600, "temperature": 0.1},
-                timeout=15,
+                      "max_tokens": max_tok, "temperature": 0.1},
+                timeout=20,
             )
         txt = r.json()["choices"][0]["message"]["content"].strip()
         log.info(f"IA: Groq OK ({model})")
