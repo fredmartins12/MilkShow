@@ -1363,49 +1363,53 @@ function go(delta) {
   const prev = cur
   cur = next
 
-  // Exit old
-  slides[prev].classList.remove('active')
-  slides[prev].classList.add(delta > 0 ? 'exit-left' : '')
-  if (delta < 0) {
-    slides[prev].style.transform = 'translateX(60px)'
-    slides[prev].style.opacity   = '0'
-  }
-  setTimeout(() => {
-    slides[prev].classList.remove('exit-left')
-    slides[prev].style.transform = ''
-    slides[prev].style.opacity   = ''
-  }, 500)
+  const exitTo  = delta > 0 ? -60 : 60   // slide saindo: esquerda (avança) ou direita (volta)
+  const enterFrom = delta > 0 ? 60 : -60  // slide entrando: vem da direita (avança) ou esquerda (volta)
+  const DUR = 'opacity 460ms cubic-bezier(0.4,0,0.2,1), transform 460ms cubic-bezier(0.4,0,0.2,1)'
 
-  // Enter new
-  if (delta < 0) {
-    slides[cur].style.transform = 'translateX(-60px)'
-    slides[cur].style.opacity   = '0'
-  }
+  // 1. Anima saída do slide atual
+  slides[prev].classList.remove('active')
+  slides[prev].style.transition   = DUR
+  slides[prev].style.transform    = `translateX(${exitTo}px)`
+  slides[prev].style.opacity      = '0'
+  slides[prev].style.pointerEvents = 'none'
+
+  // 2. Posiciona novo slide fora da tela SEM transição
+  slides[cur].style.transition = 'none'
+  slides[cur].style.transform  = `translateX(${enterFrom}px)`
+  slides[cur].style.opacity    = '0'
+  slides[cur].classList.add('active')
+
+  // 3. Dispara animação de entrada (duplo rAF garante que o browser pintou o estado inicial)
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      slides[cur].style.transition = ''
-      slides[cur].style.transform  = ''
-      slides[cur].style.opacity    = ''
-      slides[cur].classList.add('active')
+      slides[cur].style.transition = DUR
+      slides[cur].style.transform  = 'translateX(0)'
+      slides[cur].style.opacity    = '1'
     })
   })
+
+  // 4. Limpa inline styles depois da animação
+  setTimeout(() => {
+    slides[prev].style.transition    = ''
+    slides[prev].style.transform     = ''
+    slides[prev].style.opacity       = ''
+    slides[prev].style.pointerEvents = ''
+    slides[cur].style.transition     = ''
+    slides[cur].style.transform      = ''
+    slides[cur].style.opacity        = ''
+    animating = false
+  }, 500)
 
   // Update UI
   dotsEl.querySelectorAll('.dot').forEach((d, i) => d.classList.toggle('active', i === cur))
   counterEl.textContent = `${String(cur + 1).padStart(2,'0')} / ${String(total).padStart(2,'0')}`
   fillEl.style.width = `${((cur + 1) / total) * 100}%`
 
-  // Trigger counters and bars
   triggerCounters(slides[cur])
   triggerBars(slides[cur])
-
-  // Init charts for new slide
   initCharts(cur)
-
-  // QR code on last slide
   if (cur === total - 1) initQR()
-
-  setTimeout(() => { animating = false }, 520)
 }
 
 // Init counter display
