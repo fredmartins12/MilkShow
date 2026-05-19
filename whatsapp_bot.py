@@ -4243,6 +4243,24 @@ def _twiml(msg: str) -> Response:
 # AGENDADOR INTERNO (alertas diários + relatório semanal)
 # ─────────────────────────────────────────────
 import asyncio as _asyncio
+import hashlib as _hashlib
+
+# Dedup: guarda {(fazenda_id, alerta_hash, data_iso)} para não reenviar o mesmo
+# alerta para a mesma fazenda no mesmo dia.
+_alertas_enviados: set = set()
+_agendador_task = None   # garante apenas uma task rodando
+
+
+def _alerta_ja_enviado(fazenda_id: str, alerta: str) -> bool:
+    chave = (fazenda_id, _hashlib.md5(alerta.encode()).hexdigest(), datetime.date.today().isoformat())
+    if chave in _alertas_enviados:
+        return True
+    _alertas_enviados.add(chave)
+    # Limpa entradas de datas anteriores para não crescer indefinidamente
+    hoje = datetime.date.today().isoformat()
+    _alertas_enviados.difference_update({c for c in _alertas_enviados if c[2] != hoje})
+    return False
+
 
 async def _loop_agendador():
     """Roda em background:
@@ -4295,10 +4313,11 @@ async def _loop_agendador():
                         manha = await _asyncio.to_thread(_relatorio_manha, fazenda_id)
                         _enviar_whatsapp(tel, manha)
 
-                    # Alertas proativos críticos
+                    # Alertas proativos críticos (dedup: não reenvia mesmo alerta no mesmo dia)
                     alertas = _gerar_alertas_proativos(fazenda_id)
-                    if alertas:
-                        msg = "*⚠️ Alertas MilkShow:*\n" + "\n".join(f"• {a}" for a in alertas)
+                    novos = [a for a in alertas if not _alerta_ja_enviado(fazenda_id, a)]
+                    if novos:
+                        msg = "*⚠️ Alertas MilkShow:*\n" + "\n".join(f"• {a}" for a in novos)
                         _enviar_whatsapp(tel, msg)
 
                     # Relatório semanal toda segunda-feira (inclui agenda na função)
@@ -4323,7 +4342,9 @@ async def _loop_agendador():
 
 @app.on_event("startup")
 async def _iniciar_agendador():
-    _asyncio.create_task(_loop_agendador())
+    global _agendador_task
+    if _agendador_task is None or _agendador_task.done():
+        _agendador_task = _asyncio.create_task(_loop_agendador())
 
 
 # ─────────────────────────────────────────────
@@ -4385,10 +4406,11 @@ def disparar_alertas(authorization: str = Header(default="")):
     for reg in registros:
         tel, fazenda_id = reg["tel"], reg["fazenda_id"]
         alertas = _gerar_alertas_proativos(fazenda_id)
-        if alertas:
-            msg = "*Alertas MilkShow:*\n" + "\n".join(f"• {a}" for a in alertas)
+        novos = [a for a in alertas if not _alerta_ja_enviado(fazenda_id, a)]
+        if novos:
+            msg = "*Alertas MilkShow:*\n" + "\n".join(f"• {a}" for a in novos)
             ok  = _enviar_whatsapp(tel, msg)
-            resultado.append({"tel": tel, "alertas": len(alertas), "enviado": ok})
+            resultado.append({"tel": tel, "alertas": len(novos), "enviado": ok})
         else:
             resultado.append({"tel": tel, "alertas": 0, "enviado": False})
     return {"disparados": resultado}
