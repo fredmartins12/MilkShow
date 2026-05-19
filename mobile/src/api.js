@@ -72,6 +72,9 @@ export const api = {
   // Agenda semanal
   agenda:               (dias = 7)       => req('GET',  `/agenda?dias=${dias}`),
 
+  // Custo por litro (KPI mensal)
+  custoLitro:           ()               => req('GET',  '/custo_litro'),
+
   // Ranking de rentabilidade
   ranking:              (dias = 30)      => req('GET',  `/ranking?dias=${dias}`),
 

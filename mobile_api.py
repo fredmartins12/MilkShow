@@ -947,3 +947,56 @@ def resumo_financeiro(dias: int = 30, user=Depends(_get_user)):
         resumo[cat]["total"] += d.get("valor", 0)
         resumo[cat]["qtd"]   += 1
     return sorted(resumo.values(), key=lambda x: x["total"], reverse=True)
+
+
+# CUSTO POR LITRO (KPI mensal)
+# ─────────────────────────────────────────────
+@mobile_router.get("/custo_litro")
+def custo_por_litro(user=Depends(_get_user)):
+    """Custo de produção por litro da fazenda no mês atual.
+
+    Retorna:
+        custo_litro  — total de despesas / litros produzidos (R$/L)
+        preco_litro  — receita total / litros produzidos (R$/L médio vendas)
+        margem_litro — preco_litro - custo_litro
+        total_desp   — soma de todas as despesas do mês
+        total_rec    — soma de todas as receitas do mês
+        total_prod   — litros produzidos no mês
+        breakdown    — despesas agrupadas por categoria (para gráfico de pizza)
+    """
+    fid     = user["fazenda_id"]
+    hoje    = datetime.date.today()
+    ini_mes = hoje.replace(day=1).isoformat()
+
+    fin_docs  = [d.to_dict() for d in
+                 _coll(fid, "financeiro").where(filter=FieldFilter("data", ">=", ini_mes)).stream()]
+    prod_docs = [d.to_dict() for d in
+                 _coll(fid, "producao").where(filter=FieldFilter("data", ">=", ini_mes)).stream()]
+
+    total_prod = sum(p.get("leite", 0) for p in prod_docs)
+    total_rec  = sum(f.get("valor", 0) for f in fin_docs if "Venda" in (f.get("cat") or f.get("categoria", "")))
+    total_desp = sum(f.get("valor", 0) for f in fin_docs if "Venda" not in (f.get("cat") or f.get("categoria", "")))
+
+    custo_litro  = round(total_desp / total_prod, 4) if total_prod > 0 else 0.0
+    preco_litro  = round(total_rec  / total_prod, 4) if total_prod > 0 else 0.0
+    margem_litro = round(preco_litro - custo_litro, 4)
+
+    # Breakdown por categoria para gráfico
+    breakdown: dict = {}
+    for f in fin_docs:
+        if "Venda" in (f.get("cat") or f.get("categoria", "")):
+            continue
+        cat = f.get("cat") or f.get("categoria") or "Outros"
+        breakdown[cat] = breakdown.get(cat, 0) + f.get("valor", 0)
+
+    return {
+        "custo_litro":  custo_litro,
+        "preco_litro":  preco_litro,
+        "margem_litro": margem_litro,
+        "total_desp":   round(total_desp, 2),
+        "total_rec":    round(total_rec,  2),
+        "total_prod":   round(total_prod, 1),
+        "mes":          ini_mes,
+        "breakdown":    [{"cat": k, "valor": round(v, 2)}
+                         for k, v in sorted(breakdown.items(), key=lambda x: -x[1])],
+    }

@@ -3837,6 +3837,47 @@ def _criar_fazenda_whatsapp(tel: str, email: str, nome_fazenda: str, nome_pessoa
 
 
 # ─────────────────────────────────────────────
+# CUSTO POR LITRO DA FAZENDA (KPI mensal)
+# ─────────────────────────────────────────────
+def _calcular_custo_litro_fazenda(fazenda_id: str, ini_mes: str | None = None) -> dict:
+    """Retorna custo por litro da fazenda no mês atual.
+
+    Retorna:
+        {
+          "custo_litro": float,   # R$/L total de custo
+          "preco_litro": float,   # R$/L de receita (preço médio vendas)
+          "margem_litro": float,  # receita - custo por litro
+          "total_desp": float,    # despesas totais do mês
+          "total_prod": float,    # litros produzidos no mês
+          "total_rec": float,     # receita total do mês
+        }
+    """
+    hoje = datetime.date.today()
+    if ini_mes is None:
+        ini_mes = hoje.replace(day=1).isoformat()
+
+    fin_mes  = _cached_financeiro(fazenda_id, ini_mes)
+    prod_mes = _cached_producao(fazenda_id, ini_mes)
+
+    total_prod = sum(p.get("leite", 0) for p in prod_mes)
+    total_rec  = sum(f.get("valor", 0) for f in fin_mes if "Venda" in f.get("cat", ""))
+    total_desp = sum(f.get("valor", 0) for f in fin_mes if "Venda" not in f.get("cat", ""))
+
+    custo_litro  = total_desp / total_prod if total_prod > 0 else 0.0
+    preco_litro  = total_rec  / total_prod if total_prod > 0 else 0.0
+    margem_litro = preco_litro - custo_litro
+
+    return {
+        "custo_litro":  round(custo_litro,  4),
+        "preco_litro":  round(preco_litro,  4),
+        "margem_litro": round(margem_litro, 4),
+        "total_desp":   round(total_desp,   2),
+        "total_prod":   round(total_prod,   1),
+        "total_rec":    round(total_rec,    2),
+    }
+
+
+# ─────────────────────────────────────────────
 # RELATÓRIO MATINAL (briefing diário às 6h)
 # ─────────────────────────────────────────────
 def _relatorio_manha(fazenda_id: str) -> str:
@@ -3864,6 +3905,18 @@ def _relatorio_manha(fazenda_id: str) -> str:
         saldo = rec - desp
         emoji = "📈" if saldo >= 0 else "📉"
         linhas.append(f"{emoji} Saldo do mês: *R$ {saldo:,.0f}*")
+    except Exception:
+        pass
+
+    try:
+        kpi = _calcular_custo_litro_fazenda(fazenda_id, ini_mes)
+        if kpi["total_prod"] > 0 and kpi["custo_litro"] > 0:
+            margem_emoji = "✅" if kpi["margem_litro"] > 0 else "⚠️"
+            linhas.append(
+                f"💧 Custo/litro: *R$ {kpi['custo_litro']:.2f}* "
+                f"| Preço médio: R$ {kpi['preco_litro']:.2f} "
+                f"{margem_emoji} Margem: R$ {kpi['margem_litro']:+.2f}/L"
+            )
     except Exception:
         pass
 
