@@ -3839,7 +3839,7 @@ def _criar_fazenda_whatsapp(tel: str, email: str, nome_fazenda: str, nome_pessoa
 # ─────────────────────────────────────────────
 # CUSTO POR LITRO DA FAZENDA (KPI mensal)
 # ─────────────────────────────────────────────
-def _calcular_custo_litro_fazenda(fazenda_id: str, ini_mes: str | None = None) -> dict:
+def _calcular_custo_litro_fazenda(fazenda_id: str, ini_mes=None) -> dict:
     """Retorna custo por litro da fazenda no mês atual.
 
     Retorna:
