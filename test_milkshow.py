@@ -274,6 +274,36 @@ if r_res.ok:
     print(f"      Categorias no resumo: {len(res)}")
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 6b. CUSTO POR LITRO (KPI mensal)
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n[6b] CUSTO POR LITRO")
+r = GET("/custo_litro")
+check("GET /custo_litro status 200", r.status_code == 200, r.text[:100])
+if r.ok:
+    kpi = r.json()
+    check("Tem campo 'custo_litro'",  "custo_litro"  in kpi)
+    check("Tem campo 'preco_litro'",  "preco_litro"  in kpi)
+    check("Tem campo 'margem_litro'", "margem_litro" in kpi)
+    check("Tem campo 'total_prod'",   "total_prod"   in kpi)
+    check("Tem campo 'total_desp'",   "total_desp"   in kpi)
+    check("Tem campo 'total_rec'",    "total_rec"    in kpi)
+    check("Tem campo 'breakdown'",    "breakdown"    in kpi)
+    check("custo_litro >= 0",   kpi.get("custo_litro", -1)  >= 0, str(kpi.get("custo_litro")))
+    check("total_prod >= 0",    kpi.get("total_prod",  -1)  >= 0, str(kpi.get("total_prod")))
+    check("total_desp >= 0",    kpi.get("total_desp",  -1)  >= 0, str(kpi.get("total_desp")))
+    check("breakdown e lista",  isinstance(kpi.get("breakdown"), list), type(kpi.get("breakdown")).__name__)
+    if kpi.get("total_prod", 0) > 0 and kpi.get("total_desp", 0) > 0:
+        custo_calc = round(kpi["total_desp"] / kpi["total_prod"], 4)
+        check("custo_litro = total_desp / total_prod",
+              abs(kpi["custo_litro"] - custo_calc) < 0.01,
+              f"kpi={kpi['custo_litro']} calc={custo_calc}")
+        check("margem_litro = preco - custo",
+              abs(kpi["margem_litro"] - (kpi["preco_litro"] - kpi["custo_litro"])) < 0.01,
+              f"{kpi['margem_litro']} vs {kpi['preco_litro'] - kpi['custo_litro']:.4f}")
+    print(f"      Producao: {kpi.get('total_prod')}L | Despesas: R${kpi.get('total_desp')}")
+    print(f"      Custo/L: R${kpi.get('custo_litro')} | Preco/L: R${kpi.get('preco_litro')} | Margem: R${kpi.get('margem_litro')}")
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 7. CONFIG
 # ══════════════════════════════════════════════════════════════════════════════
 print("\n[7] CONFIG")
