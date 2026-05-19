@@ -3913,7 +3913,7 @@ def _relatorio_manha(fazenda_id: str) -> str:
         if kpi["total_prod"] > 0 and kpi["custo_litro"] > 0:
             margem_emoji = "✅" if kpi["margem_litro"] > 0 else "⚠️"
             linhas.append(
-                f"💧 Custo/litro: *R$ {kpi['custo_litro']:.2f}* "
+                f"Custo/litro: *R$ {kpi['custo_litro']:.2f}* "
                 f"| Preço médio: R$ {kpi['preco_litro']:.2f} "
                 f"{margem_emoji} Margem: R$ {kpi['margem_litro']:+.2f}/L"
             )
