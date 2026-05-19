@@ -24,6 +24,8 @@ Recursos:
   - Listagem de registros recentes ("resumo", "estoque")
 """
 
+from __future__ import annotations
+
 import os
 import json
 import re
