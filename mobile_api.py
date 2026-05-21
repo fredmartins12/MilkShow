@@ -19,7 +19,7 @@ import time
 import base64
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends, Header, Query
+from fastapi import APIRouter, HTTPException, Depends, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -29,6 +29,50 @@ from firebase_admin import credentials, firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 mobile_router = APIRouter(prefix="/api/v1", tags=["mobile"])
+
+# ─────────────────────────────────────────────
+# RATE LIMITER (in-memory, funciona com --workers 1)
+# ─────────────────────────────────────────────
+_RATE_WINDOW   = 15 * 60   # 15 minutos
+_RATE_MAX_FAIL = 5          # máximo de falhas por janela
+_rate_data: dict = {}       # {ip: {"count": int, "until": float, "ts": float}}
+
+def _check_rate_limit(ip: str):
+    """Bloqueia IP após 5 falhas em 15 min. Levanta 429 se bloqueado."""
+    now = time.time()
+    entry = _rate_data.get(ip, {"count": 0, "until": 0.0, "ts": now})
+    if now < entry["until"]:
+        restante = int(entry["until"] - now)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Muitas tentativas. Tente novamente em {restante}s."
+        )
+    if now - entry["ts"] > _RATE_WINDOW:
+        entry = {"count": 0, "until": 0.0, "ts": now}
+    _rate_data[ip] = entry
+
+def _registrar_falha(ip: str):
+    """Incrementa contador de falhas. Bloqueia IP ao atingir limite."""
+    now = time.time()
+    entry = _rate_data.get(ip, {"count": 0, "until": 0.0, "ts": now})
+    entry["count"] += 1
+    if entry["count"] >= _RATE_MAX_FAIL:
+        entry["until"] = now + _RATE_WINDOW
+        entry["count"] = 0
+        entry["ts"] = now
+    _rate_data[ip] = entry
+
+def _limpar_rate(ip: str):
+    """Remove registro após login bem-sucedido."""
+    _rate_data.pop(ip, None)
+
+# Limpeza periódica de entradas antigas
+def _rate_gc():
+    now = time.time()
+    for ip in list(_rate_data):
+        e = _rate_data[ip]
+        if now - e["ts"] > _RATE_WINDOW * 2 and now > e.get("until", 0):
+            del _rate_data[ip]
 
 # ─────────────────────────────────────────────
 # NOTIFICAÇÕES EM TEMPO REAL (SSE)
@@ -45,7 +89,15 @@ def notify_update(fazenda_id: str, colecao: str = "all"):
 # ─────────────────────────────────────────────
 # JWT simples (sem dependência extra)
 # ─────────────────────────────────────────────
-_SECRET = os.environ.get("BOT_ADMIN_TOKEN", "milkshow_secret_2024")
+_SECRET = os.environ.get("BOT_ADMIN_TOKEN")
+if not _SECRET:
+    import secrets as _secrets_mod
+    _SECRET = _secrets_mod.token_hex(32)
+    import logging as _log_sec
+    _log_sec.getLogger(__name__).warning(
+        "BOT_ADMIN_TOKEN não definido — usando secret temporário. "
+        "Tokens não persistem entre restarts."
+    )
 
 def _jwt_encode(payload: dict) -> str:
     header = base64.urlsafe_b64encode(b'{"alg":"HS256","typ":"JWT"}').rstrip(b'=').decode()
@@ -183,7 +235,11 @@ class EstoqueInput(BaseModel):
 # AUTH
 # ─────────────────────────────────────────────
 @mobile_router.post("/auth/login")
-def login(body: LoginRequest):
+def login(body: LoginRequest, request: Request):
+    ip = request.headers.get("X-Real-IP") or request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or (request.client.host if request.client else "unknown")
+    _rate_gc()
+    _check_rate_limit(ip)
+
     tel = _normalizar_tel(body.tel)
     db  = _db()
 
@@ -195,18 +251,33 @@ def login(body: LoginRequest):
             break
 
     if not user_doc:
+        _registrar_falha(ip)
         raise HTTPException(status_code=404, detail="Número não cadastrado no MilkShow")
 
-    # Verifica PIN (armazenado como hash SHA256)
-    pin_hash = hashlib.sha256(body.pin.encode()).hexdigest()
     pin_salvo = user_doc.get("pin_hash", "")
 
     if not pin_salvo:
-        # Primeiro acesso: define o PIN automaticamente
-        db.collection("registros_tel").document(tel).set({"pin_hash": pin_hash}, merge=True)
-    elif not hmac.compare_digest(pin_hash, pin_salvo):
-        raise HTTPException(status_code=401, detail="PIN incorreto")
+        # Primeiro acesso: define o PIN como bcrypt
+        import bcrypt as _bcrypt
+        novo_hash = _bcrypt.hashpw(body.pin.encode(), _bcrypt.gensalt()).decode()
+        db.collection("registros_tel").document(tel).set({"pin_hash": novo_hash}, merge=True)
+    elif pin_salvo.startswith("$2b$") or pin_salvo.startswith("$2a$"):
+        # bcrypt
+        import bcrypt as _bcrypt
+        if not _bcrypt.checkpw(body.pin.encode(), pin_salvo.encode()):
+            _registrar_falha(ip)
+            raise HTTPException(status_code=401, detail="PIN incorreto")
+    else:
+        # Legacy SHA256 — valida e migra para bcrypt
+        pin_hash_legacy = hashlib.sha256(body.pin.encode()).hexdigest()
+        if not hmac.compare_digest(pin_hash_legacy, pin_salvo):
+            _registrar_falha(ip)
+            raise HTTPException(status_code=401, detail="PIN incorreto")
+        import bcrypt as _bcrypt
+        novo_hash = _bcrypt.hashpw(body.pin.encode(), _bcrypt.gensalt()).decode()
+        db.collection("registros_tel").document(tel).set({"pin_hash": novo_hash}, merge=True)
 
+    _limpar_rate(ip)
     exp = datetime.datetime.utcnow() + datetime.timedelta(days=30)
     token = _jwt_encode({
         "tel":        tel,
@@ -270,9 +341,10 @@ def google_login(body: GoogleLoginRequest):
 @mobile_router.post("/auth/set-pin")
 def set_pin(body: LoginRequest, user=Depends(_get_user)):
     """Troca o PIN do usuário logado."""
+    import bcrypt as _bcrypt
     tel = user["tel"]
-    pin_hash = hashlib.sha256(body.pin.encode()).hexdigest()
-    _db().collection("registros_tel").document(tel).set({"pin_hash": pin_hash}, merge=True)
+    novo_hash = _bcrypt.hashpw(body.pin.encode(), _bcrypt.gensalt()).decode()
+    _db().collection("registros_tel").document(tel).set({"pin_hash": novo_hash}, merge=True)
     return {"ok": True}
 
 

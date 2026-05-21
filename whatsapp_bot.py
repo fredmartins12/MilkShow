@@ -51,11 +51,19 @@ from mobile_api import mobile_router, notify_update
 
 app = FastAPI(title="MilkShow WhatsApp Bot", version="1.0", docs_url=None, redoc_url=None)
 
+_ALLOWED_ORIGINS = [
+    o.strip() for o in
+    os.environ.get("CORS_ORIGINS",
+        "http://localhost:5173,http://localhost:8080,http://178.104.252.193"
+    ).split(",") if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+    allow_credentials=False,
 )
 
 app.include_router(mobile_router)
