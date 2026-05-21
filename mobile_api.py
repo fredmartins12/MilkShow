@@ -1072,3 +1072,207 @@ def custo_por_litro(user=Depends(_get_user)):
         "breakdown":    [{"cat": k, "valor": round(v, 2)}
                          for k, v in sorted(breakdown.items(), key=lambda x: -x[1])],
     }
+
+
+# ─────────────────────────────────────────────
+# RELATÓRIO MENSAL EM PDF
+# ─────────────────────────────────────────────
+@mobile_router.get("/relatorio_mensal")
+def relatorio_mensal(user=Depends(_get_user), mes: str = Query(default="")):
+    """
+    Gera PDF com relatório mensal: produção, financeiro e custo/litro.
+    ?mes=2026-05  (padrão: mês atual)
+    """
+    from fpdf import FPDF
+    from fastapi.responses import Response as _Resp
+
+    fid  = user["fazenda_id"]
+    hoje = datetime.date.today()
+
+    # Resolve mês
+    if mes:
+        try:
+            ano, m = int(mes[:4]), int(mes[5:7])
+        except Exception:
+            ano, m = hoje.year, hoje.month
+    else:
+        ano, m = hoje.year, hoje.month
+
+    ini_mes = f"{ano:04d}-{m:02d}-01"
+    # Fim do mês
+    if m == 12:
+        fim_mes = f"{ano+1:04d}-01-01"
+    else:
+        fim_mes = f"{ano:04d}-{m+1:02d}-01"
+
+    import calendar
+    nome_mes = calendar.month_name[m]  # inglês — traduzimos abaixo
+    meses_pt = ["","Janeiro","Fevereiro","Março","Abril","Maio","Junho",
+                 "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
+    mes_label = f"{meses_pt[m]} {ano}"
+
+    db = _db()
+
+    # Config da fazenda
+    cfg_doc = _coll(fid, "config").document("principal").get()
+    cfg = cfg_doc.to_dict() if cfg_doc.exists else {}
+    nome_fazenda = cfg.get("nome_fazenda") or fid
+
+    # Dados do mês
+    fin_docs  = [d.to_dict() for d in _coll(fid, "financeiro")
+                 .where(filter=FieldFilter("data", ">=", ini_mes))
+                 .where(filter=FieldFilter("data", "<",  fim_mes)).stream()]
+    prod_docs = [d.to_dict() for d in _coll(fid, "producao")
+                 .where(filter=FieldFilter("data", ">=", ini_mes))
+                 .where(filter=FieldFilter("data", "<",  fim_mes)).stream()]
+    animais   = [d.to_dict() for d in _coll(fid, "animais").stream()]
+
+    # KPIs de produção
+    total_prod   = sum(p.get("leite", 0) for p in prod_docs)
+    dias_no_mes  = calendar.monthrange(ano, m)[1]
+    media_dia    = round(total_prod / dias_no_mes, 1)
+    vacas_lact   = len([a for a in animais if a.get("status") == "Lactação"])
+
+    # KPIs financeiros
+    total_rec  = sum(f.get("valor", 0) for f in fin_docs
+                     if "Venda" in (f.get("cat") or f.get("categoria", "")))
+    total_desp = sum(f.get("valor", 0) for f in fin_docs
+                     if "Venda" not in (f.get("cat") or f.get("categoria", "")))
+    saldo      = total_rec - total_desp
+    custo_litro  = round(total_desp / total_prod, 2) if total_prod > 0 else 0.0
+    preco_litro  = round(total_rec  / total_prod, 2) if total_prod > 0 else 0.0
+    margem_litro = round(preco_litro - custo_litro, 2)
+
+    # Produção por animal (top 10)
+    por_animal: dict = {}
+    for p in prod_docs:
+        nome = p.get("nome_animal") or p.get("id_animal") or "?"
+        por_animal[nome] = por_animal.get(nome, 0) + p.get("leite", 0)
+    top_animais = sorted(por_animal.items(), key=lambda x: -x[1])[:10]
+
+    # Despesas por categoria
+    por_cat: dict = {}
+    for f in fin_docs:
+        if "Venda" in (f.get("cat") or f.get("categoria", "")):
+            continue
+        cat = f.get("cat") or f.get("categoria") or "Outros"
+        por_cat[cat] = por_cat.get(cat, 0) + f.get("valor", 0)
+    desp_cats = sorted(por_cat.items(), key=lambda x: -x[1])
+
+    # ── Monta o PDF ────────────────────────────────────────────
+    class PDF(FPDF):
+        def header(self):
+            self.set_font("Helvetica", "B", 14)
+            self.set_fill_color(30, 80, 50)
+            self.set_text_color(255, 255, 255)
+            self.cell(0, 12, f"  MilkShow — {nome_fazenda}", fill=True, ln=True)
+            self.set_text_color(0, 0, 0)
+            self.set_font("Helvetica", "", 10)
+            self.cell(0, 6, f"  Relatório Mensal — {mes_label}", ln=True)
+            self.ln(4)
+
+        def footer(self):
+            self.set_y(-12)
+            self.set_font("Helvetica", "I", 8)
+            self.set_text_color(120, 120, 120)
+            self.cell(0, 8, f"MilkShow  |  Gerado em {hoje.strftime('%d/%m/%Y')}  |  Pág. {self.page_no()}", align="C")
+
+    def section(pdf, titulo):
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_fill_color(230, 245, 235)
+        pdf.cell(0, 8, f"  {titulo}", fill=True, ln=True)
+        pdf.ln(2)
+
+    def kpi_row(pdf, label, valor, destaque=False):
+        pdf.set_font("Helvetica", "B" if destaque else "", 10)
+        pdf.cell(90, 7, f"  {label}", border="B")
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(0, 7, valor, border="B", ln=True)
+
+    def table_header(pdf, cols):
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_fill_color(200, 230, 210)
+        for label, w in cols:
+            pdf.cell(w, 7, f" {label}", fill=True, border=1)
+        pdf.ln()
+
+    def table_row(pdf, values, cols, alt=False):
+        pdf.set_font("Helvetica", "", 9)
+        if alt:
+            pdf.set_fill_color(245, 250, 247)
+        else:
+            pdf.set_fill_color(255, 255, 255)
+        for (_, w), v in zip(cols, values):
+            pdf.cell(w, 6, f" {v}", fill=True, border=1)
+        pdf.ln()
+
+    pdf = PDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+
+    # — Produção ———————————————————————————————
+    section(pdf, "Produção de Leite")
+    kpi_row(pdf, "Total do mês", f"{total_prod:,.0f} L".replace(",", "."))
+    kpi_row(pdf, "Média diária", f"{media_dia:.1f} L/dia")
+    kpi_row(pdf, "Vacas em lactação", str(vacas_lact))
+    kpi_row(pdf, "Registros lançados", str(len(prod_docs)))
+    pdf.ln(4)
+
+    if top_animais:
+        section(pdf, "Top Animais — Produção")
+        cols = [("Animal", 80), ("Litros no Mês", 45), ("% do Rebanho", 45)]
+        table_header(pdf, cols)
+        for i, (nome_a, litros) in enumerate(top_animais):
+            pct = f"{litros/total_prod*100:.1f}%" if total_prod > 0 else "—"
+            table_row(pdf, [nome_a, f"{litros:.1f} L", pct], cols, alt=i%2==1)
+        pdf.ln(4)
+
+    # — Financeiro ————————————————————————————
+    section(pdf, "Resumo Financeiro")
+    kpi_row(pdf, "Receitas (Venda de Leite)", f"R$ {total_rec:,.2f}".replace(",","X").replace(".",",").replace("X","."))
+    kpi_row(pdf, "Despesas totais", f"R$ {total_desp:,.2f}".replace(",","X").replace(".",",").replace("X","."))
+    cor_saldo = (0, 120, 0) if saldo >= 0 else (180, 0, 0)
+    pdf.set_text_color(*cor_saldo)
+    kpi_row(pdf, "Saldo do mês", f"R$ {saldo:+,.2f}".replace(",","X").replace(".",",").replace("X","."), destaque=True)
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(4)
+
+    if desp_cats:
+        section(pdf, "Despesas por Categoria")
+        cols = [("Categoria", 100), ("Valor", 45), ("% do Total", 45)]
+        table_header(pdf, cols)
+        for i, (cat, val) in enumerate(desp_cats):
+            pct = f"{val/total_desp*100:.1f}%" if total_desp > 0 else "—"
+            val_fmt = f"R$ {val:,.2f}".replace(",","X").replace(".",",").replace("X",".")
+            table_row(pdf, [cat, val_fmt, pct], cols, alt=i%2==1)
+        pdf.ln(4)
+
+    # — Custo por Litro ———————————————————————
+    section(pdf, "Custo por Litro (KPI Mensal)")
+    kpi_row(pdf, "Custo/litro (despesas ÷ produção)", f"R$ {custo_litro:.2f}/L")
+    kpi_row(pdf, "Preço médio recebido/litro", f"R$ {preco_litro:.2f}/L")
+    cor_m = (0, 120, 0) if margem_litro >= 0 else (180, 0, 0)
+    pdf.set_text_color(*cor_m)
+    kpi_row(pdf, "Margem por litro", f"R$ {margem_litro:+.2f}/L", destaque=True)
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(6)
+
+    # Rodapé interpretativo
+    pdf.set_font("Helvetica", "I", 9)
+    pdf.set_text_color(80, 80, 80)
+    if margem_litro >= 0:
+        pdf.multi_cell(0, 5, f"  Resultado: margem positiva de R$ {margem_litro:.2f}/L. "
+                             f"A cada 1.000 litros produzidos, a fazenda gerou R$ {margem_litro*1000:.2f} de lucro.")
+    else:
+        pdf.multi_cell(0, 5, f"  Atenção: margem negativa de R$ {margem_litro:.2f}/L. "
+                             f"As despesas superaram as receitas em R$ {abs(margem_litro)*total_prod:.2f} no mês.")
+
+    # Gera bytes do PDF
+    pdf_bytes = pdf.output()
+    filename  = f"MilkShow_{nome_fazenda.replace(' ','_')}_{ano}{m:02d}.pdf"
+
+    return _Resp(
+        content=bytes(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

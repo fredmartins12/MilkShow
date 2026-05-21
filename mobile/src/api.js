@@ -75,6 +75,15 @@ export const api = {
   // Custo por litro (KPI mensal)
   custoLitro:           ()               => req('GET',  '/custo_litro'),
 
+  // Relatório mensal PDF — retorna URL autenticada para download direto
+  relatorioMensalUrl:   (mes = '')       => `${BASE}/relatorio_mensal${mes ? `?mes=${mes}` : ''}`,
+  relatorioMensal: async (mes = '') => {
+    const url = `${BASE}/relatorio_mensal${mes ? `?mes=${mes}` : ''}`
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${getToken()}` } })
+    if (!res.ok) throw new Error('Erro ao gerar relatório')
+    return res.blob()
+  },
+
   // Ranking de rentabilidade
   ranking:              (dias = 30)      => req('GET',  `/ranking?dias=${dias}`),
 

@@ -3,7 +3,7 @@ import {
   ComposedChart, Area, Line, Bar,
   BarChart, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts'
-import { AlertTriangle, CheckCircle, TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import { AlertTriangle, CheckCircle, TrendingUp, TrendingDown, Minus, FileDown } from 'lucide-react'
 import { api } from '../api.js'
 import { Loading, ErrorMsg, Delta, fmtBRL, T, SectionHeader, ChartControls } from '../ui.jsx'
 
@@ -185,6 +185,25 @@ export default function TabBI() {
   const [erro, setErro]           = useState('')
   const [periodo, setPeriodo]     = useState(14)
   const [tipo, setTipo]           = useState('area')
+  const [pdfLoading, setPdfLoading] = useState(false)
+
+  async function baixarRelatorio() {
+    setPdfLoading(true)
+    try {
+      const blob = await api.relatorioMensal()
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      a.href     = url
+      const hoje = new Date()
+      a.download = `MilkShow_Relatorio_${hoje.getFullYear()}${String(hoje.getMonth()+1).padStart(2,'0')}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      alert('Erro ao gerar relatório: ' + e.message)
+    } finally {
+      setPdfLoading(false)
+    }
+  }
 
   const buildProdChart = useCallback((raw, dias) => {
     const hj = new Date().toISOString().split('T')[0]
@@ -318,12 +337,29 @@ export default function TabBI() {
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
 
-      {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-5 shrink-0"
-           style={{ borderBottom: `1px solid ${T.border}` }}>
-        {KPIS.map((k, i) => (
-          <KpiCard key={k.label} {...k} last={i === KPIS.length - 1} />
-        ))}
+      {/* KPIs + botão PDF */}
+      <div className="shrink-0" style={{ borderBottom: `1px solid ${T.border}` }}>
+        <div className="grid grid-cols-2 md:grid-cols-5">
+          {KPIS.map((k, i) => (
+            <KpiCard key={k.label} {...k} last={i === KPIS.length - 1} />
+          ))}
+        </div>
+        <div className="flex justify-end px-4 py-2" style={{ borderTop: `1px solid ${T.border}` }}>
+          <button
+            onClick={baixarRelatorio}
+            disabled={pdfLoading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[11px] font-mono uppercase tracking-widest transition-colors"
+            style={{
+              background: pdfLoading ? T.border : 'rgba(22,163,74,0.15)',
+              color: pdfLoading ? T.textMuted : '#4ade80',
+              border: `1px solid ${pdfLoading ? T.border : 'rgba(74,222,128,0.3)'}`,
+              cursor: pdfLoading ? 'not-allowed' : 'pointer',
+            }}
+          >
+            <FileDown size={12} />
+            {pdfLoading ? 'Gerando...' : 'Relatório PDF'}
+          </button>
+        </div>
       </div>
 
       {/* Meta de produção */}
