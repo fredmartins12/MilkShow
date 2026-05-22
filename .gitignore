@@ -9,4 +9,7 @@ deploy/.env
 deploy/evolution.env
 *.key
 *.pem
-
+.playwright-mcp/
+*.png
+*.jpg
+.pytest_cache/

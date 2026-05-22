@@ -191,7 +191,7 @@ if r.ok:
     san = r.json()
     check("Tem registros sanitarios", len(san) > 0, f"len={len(san)}")
     check("Registro tem 'animal'",    all("animal" in s for s in san[:3]))
-    check("Registro tem 'protocolo'", all("protocolo" in s for s in san[:3]))
+    check("Registro tem 'tipo'",      all("tipo" in s for s in san[:3]))
     check("Registro tem 'id'",        all("id" in s for s in san[:3]))
     pendentes = [s for s in san if not s.get("executado")]
     executados = [s for s in san if s.get("executado")]
