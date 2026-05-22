@@ -2138,6 +2138,7 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
             "• \"vendi 1200L por R$1800\" — venda\n\n"
             "*Comandos:*\n"
             "• *resumo* — relatório do dia\n"
+            "• *pdf* — relatório mensal em PDF\n"
             "• *estoque* — ver armazém\n"
             "• *pausar 2h* — modo silencioso\n"
             "• *cancelar* — reinicia a conversa\n"
@@ -2171,6 +2172,47 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
         return _relatorio_manha(fazenda_id)
     if lower in ("ranking", "rentabilidade", "/ranking"):
         return _gerar_ranking_rentabilidade(fazenda_id)
+
+    # ── Relatório PDF via WhatsApp ────────────────────────────
+    _PDF_TRIGGERS = {
+        "relatorio pdf", "relatório pdf", "pdf", "relatorio mensal",
+        "relatório mensal", "me manda o relatorio", "me manda o relatório",
+        "manda o pdf", "manda o relatorio", "manda o relatório",
+        "quero o relatorio", "quero o relatório", "envia o pdf",
+        "envia o relatorio", "envia o relatório", "/pdf", "/relatorio",
+        "gera o pdf", "gera o relatorio",
+    }
+    if lower in _PDF_TRIGGERS or any(lower.startswith(t) for t in _PDF_TRIGGERS):
+        def _enviar_pdf_async():
+            try:
+                import calendar as _cal
+                hoje_d = datetime.date.today()
+                meses_pt = ["","Janeiro","Fevereiro","Marco","Abril","Maio","Junho",
+                            "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
+                nome_mes = meses_pt[hoje_d.month]
+                _enviar_whatsapp(tel, f"Gerando seu relatorio de {nome_mes}... aguarde um instante.")
+                pdf_bytes = _gerar_pdf_relatorio(fazenda_id)
+                nome_faz = fazenda_id
+                try:
+                    cfg = _db().collection("fazendas").document(fazenda_id).get()
+                    if cfg.exists:
+                        nome_faz = cfg.to_dict().get("nome") or fazenda_id
+                except Exception:
+                    pass
+                filename = f"MilkShow_{nome_faz.replace(' ','_')}_{hoje_d.year}{hoje_d.month:02d}.pdf"
+                caption  = f"Relatorio {nome_mes}/{hoje_d.year} - {nome_faz}"
+                ok = _enviar_pdf_whatsapp(tel, pdf_bytes, filename, caption)
+                if not ok:
+                    _enviar_whatsapp(tel,
+                        "Nao consegui enviar o PDF agora. "
+                        "Acesse o app MilkShow > aba BI > botao Relatorio PDF para baixar.")
+            except Exception as e:
+                log.error(f"_enviar_pdf_async erro: {e}")
+                _enviar_whatsapp(tel, "Erro ao gerar o relatorio. Tente novamente mais tarde.")
+        import threading as _thr
+        _thr.Thread(target=_enviar_pdf_async, daemon=True).start()
+        return ""  # resposta enviada assincronamente
+
     if lower in ("agenda", "semana", "tarefas", "/agenda"):
         return _formatar_agenda_whatsapp(fazenda_id)
     # Pausar: "pausar 2h" / "pausar 30min"
@@ -3402,6 +3444,333 @@ def _enviar_whatsapp(para: str, mensagem: str) -> bool:
             return True
     log.error(f"Todos os provedores WhatsApp falharam para {para}")
     return False
+
+
+def _enviar_pdf_whatsapp(para: str, pdf_bytes: bytes, filename: str, caption: str = "") -> bool:
+    """Envia PDF via Evolution API como documento. Fallback: avisa que gerou mas não enviou."""
+    import base64 as _b64
+    url      = os.environ.get("EVOLUTION_URL", "").rstrip("/")
+    api_key  = os.environ.get("EVOLUTION_KEY", "")
+    instance = os.environ.get("EVOLUTION_INSTANCE", "milkshow")
+    if not url or not api_key:
+        log.warning("_enviar_pdf_whatsapp: Evolution não configurado")
+        return False
+
+    jid_original = _JID_CACHE.get(para, "")
+    num = re.sub(r'\D', '', para)
+    if not num.startswith('55'):
+        num = '55' + num
+
+    candidatos = []
+    if jid_original:
+        candidatos.append(jid_original)
+    candidatos.append(num)
+    if len(num) == 13:
+        candidatos.append(num[:4] + num[5:])
+
+    b64 = _b64.b64encode(pdf_bytes).decode()
+    media_data = f"data:application/pdf;base64,{b64}"
+
+    try:
+        import httpx as _hx
+        hdrs = {"apikey": api_key, "Content-Type": "application/json"}
+        for candidato in candidatos:
+            r = _hx.post(
+                f"{url}/message/sendMedia/{instance}",
+                headers=hdrs,
+                json={
+                    "number":    candidato,
+                    "mediatype": "document",
+                    "mimetype":  "application/pdf",
+                    "caption":   caption or filename,
+                    "media":     media_data,
+                    "fileName":  filename,
+                    "delay":     300,
+                },
+                timeout=30,
+            )
+            if r.status_code in (200, 201):
+                log.info(f"PDF → {para}: OK ({len(pdf_bytes)//1024}KB via {candidato})")
+                return True
+            log.debug(f"PDF sendMedia {candidato}: {r.status_code} {r.text[:120]}")
+    except Exception as e:
+        log.warning(f"_enviar_pdf_whatsapp erro: {e}")
+    return False
+
+
+def _gerar_pdf_relatorio(fazenda_id: str, mes: str = "") -> bytes:
+    """Gera o PDF do relatório mensal e retorna os bytes.
+    Reutiliza a mesma lógica do endpoint /relatorio_mensal."""
+    import datetime as _dt
+    import calendar as _cal
+
+    hoje = _dt.date.today()
+    if mes:
+        try:
+            ano, m = int(mes[:4]), int(mes[5:7])
+        except Exception:
+            ano, m = hoje.year, hoje.month
+    else:
+        ano, m = hoje.year, hoje.month
+
+    # Importa e chama a função diretamente via mobile_api
+    from mobile_api import _coll
+    from google.cloud.firestore_v1.base_query import FieldFilter
+
+    ini_mes = f"{ano:04d}-{m:02d}-01"
+    fim_mes = f"{ano+1:04d}-01-01" if m == 12 else f"{ano:04d}-{m+1:02d}-01"
+
+    meses_pt = ["","Janeiro","Fevereiro","Marco","Abril","Maio","Junho",
+                "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
+    mes_label = f"{meses_pt[m]} / {ano}"
+
+    db_ref = _db()
+    nome_fazenda = fazenda_id
+    cfg_doc = _coll(fazenda_id, "config").document("principal").get()
+    if cfg_doc.exists:
+        nome_fazenda = cfg_doc.to_dict().get("nome_fazenda") or fazenda_id
+    else:
+        faz_doc = db_ref.collection("fazendas").document(fazenda_id).get()
+        if faz_doc.exists:
+            nome_fazenda = faz_doc.to_dict().get("nome") or fazenda_id
+
+    fin_docs  = [d.to_dict() for d in _coll(fazenda_id,"financeiro")
+                 .where(filter=FieldFilter("data",">=",ini_mes))
+                 .where(filter=FieldFilter("data","<",fim_mes)).stream()]
+    prod_docs = [d.to_dict() for d in _coll(fazenda_id,"producao")
+                 .where(filter=FieldFilter("data",">=",ini_mes))
+                 .where(filter=FieldFilter("data","<",fim_mes)).stream()]
+    animais   = [d.to_dict() for d in _coll(fazenda_id,"animais").stream()]
+
+    total_prod   = sum(p.get("leite",0) for p in prod_docs)
+    dias_no_mes  = _cal.monthrange(ano, m)[1]
+    media_dia    = round(total_prod / dias_no_mes, 1) if dias_no_mes else 0
+    vacas_lact   = len([a for a in animais if a.get("status","") in ("Lactacao","Lactação")])
+    total_rec    = sum(f.get("valor",0) for f in fin_docs if "Venda" in (f.get("cat") or f.get("categoria","")))
+    total_desp   = sum(f.get("valor",0) for f in fin_docs if "Venda" not in (f.get("cat") or f.get("categoria","")))
+    saldo        = total_rec - total_desp
+    custo_litro  = round(total_desp / total_prod, 2) if total_prod > 0 else 0.0
+    preco_litro  = round(total_rec  / total_prod, 2) if total_prod > 0 else 0.0
+    margem_litro = round(preco_litro - custo_litro, 2)
+
+    por_animal: dict = {}
+    for p in prod_docs:
+        n = p.get("nome_animal") or p.get("id_animal") or "?"
+        por_animal[n] = por_animal.get(n, 0) + p.get("leite", 0)
+    top_animais = sorted(por_animal.items(), key=lambda x: -x[1])[:8]
+
+    por_cat: dict = {}
+    for f in fin_docs:
+        if "Venda" in (f.get("cat") or f.get("categoria","")): continue
+        cat = f.get("cat") or f.get("categoria") or "Outros"
+        por_cat[cat] = por_cat.get(cat, 0) + f.get("valor", 0)
+    desp_cats = sorted(por_cat.items(), key=lambda x: -x[1])[:8]
+
+    from fpdf import FPDF
+    from fpdf.enums import XPos, YPos
+
+    C_GREEN_DARK  = (22,  101, 52)
+    C_GREEN_MED   = (34,  139, 70)
+    C_GREEN_LIGHT = (220, 242, 228)
+    C_GREEN_PALE  = (240, 253, 244)
+    C_BLUE        = (37,  99,  235)
+    C_BLUE_LIGHT  = (219, 234, 254)
+    C_RED         = (185, 28,  28)
+    C_RED_LIGHT   = (254, 226, 226)
+    C_AMBER       = (180, 83,  9)
+    C_AMBER_LIGHT = (254, 243, 199)
+    C_GRAY_900    = (17,  24,  39)
+    C_GRAY_600    = (75,  85,  99)
+    C_GRAY_400    = (156, 163, 175)
+    C_GRAY_100    = (243, 244, 246)
+    C_WHITE       = (255, 255, 255)
+    C_BORDER      = (209, 213, 219)
+
+    ML = 12; MR = 12; W = 210 - ML - MR
+
+    def _s(t):
+        return (str(t)
+                .replace("\u2014","-").replace("\u2013","-")
+                .replace("\u2019","'").replace("\u2018","'")
+                .replace("\u201c",'"').replace("\u201d",'"')
+                .encode("latin-1", errors="replace").decode("latin-1"))
+
+    def brl(v, sign=False):
+        s = f"{abs(v):,.2f}".replace(",","X").replace(".",",").replace("X",".")
+        prefix = "R$ " if not sign else ("+ R$ " if v >= 0 else "- R$ ")
+        return _s(prefix + s)
+
+    class PDF(FPDF):
+        def header(self):
+            self.set_fill_color(*C_GREEN_DARK)
+            self.rect(0, 0, 210, 32, style="F")
+            self.set_fill_color(*C_GREEN_MED)
+            self.rect(0, 32, 210, 2, style="F")
+            self.set_xy(ML, 6)
+            self.set_font("Helvetica", "B", 18)
+            self.set_text_color(*C_WHITE)
+            self.cell(90, 9, "MilkShow", new_x=XPos.RIGHT, new_y=YPos.TOP)
+            self.set_font("Helvetica", "B", 11)
+            self.set_text_color(180, 230, 190)
+            self.set_xy(ML + 90, 7)
+            self.cell(W - 90, 8, _s(mes_label), align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            self.set_xy(ML, 17)
+            self.set_font("Helvetica", "", 9)
+            self.set_text_color(180, 220, 190)
+            self.cell(W/2, 6, _s(nome_fazenda), new_x=XPos.RIGHT, new_y=YPos.TOP)
+            self.set_font("Helvetica", "", 8)
+            self.set_text_color(150, 200, 160)
+            self.set_xy(ML + W/2, 18)
+            self.cell(W/2, 5, f"Gerado em {hoje.strftime('%d/%m/%Y')}", align="R",
+                      new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            self.set_text_color(*C_GRAY_900)
+            self.set_y(38)
+
+        def footer(self):
+            self.set_y(-13)
+            self.set_fill_color(*C_GRAY_100)
+            self.rect(0, self.get_y(), 210, 13, style="F")
+            self.set_font("Helvetica", "", 8)
+            self.set_text_color(*C_GRAY_400)
+            self.cell(0, 13, _s(f"MilkShow  |  {nome_fazenda}  |  {mes_label}  |  Pag. {self.page_no()}"), align="C")
+
+    pdf = PDF()
+    pdf.set_margins(ML, 10, MR)
+    pdf.set_auto_page_break(auto=True, margin=18)
+    pdf.add_page()
+
+    def section_title(title):
+        pdf.ln(4)
+        y = pdf.get_y()
+        pdf.set_fill_color(*C_GREEN_LIGHT)
+        pdf.rect(ML, y, W, 8, style="F")
+        pdf.set_fill_color(*C_GREEN_MED)
+        pdf.rect(ML, y, 3, 8, style="F")
+        pdf.set_xy(ML + 5, y)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_text_color(*C_GREEN_DARK)
+        pdf.cell(W - 5, 8, _s(title), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.set_text_color(*C_GRAY_900)
+        pdf.ln(2)
+
+    def kpi_card(x, y, w, h, label, value, unit="", bg=C_WHITE, val_color=None):
+        pdf.set_fill_color(*bg)
+        pdf.set_draw_color(*C_BORDER)
+        pdf.rect(x, y, w, h, style="FD")
+        pdf.set_xy(x + 2, y + 2)
+        pdf.set_font("Helvetica", "", 7)
+        pdf.set_text_color(*C_GRAY_400)
+        pdf.cell(w - 4, 4, _s(label.upper()), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.set_xy(x + 2, y + 7)
+        pdf.set_font("Helvetica", "B", 14)
+        pdf.set_text_color(*(val_color or C_GRAY_900))
+        pdf.cell(w - 4, 8, _s(str(value)), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        if unit:
+            pdf.set_xy(x + 2, y + h - 5)
+            pdf.set_font("Helvetica", "", 7)
+            pdf.set_text_color(*C_GRAY_400)
+            pdf.cell(w - 4, 4, _s(unit))
+        pdf.set_text_color(*C_GRAY_900)
+        pdf.set_draw_color(0, 0, 0)
+
+    def bar_row(label, value, max_val, suffix="", color=C_GREEN_MED, show_val=""):
+        y = pdf.get_y()
+        if y > 265:
+            pdf.add_page(); y = pdf.get_y()
+        BAR_X = ML + 38; BAR_W = 95
+        bar_pct = min(value / max_val, 1.0) if max_val > 0 else 0
+        pdf.set_xy(ML, y)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(*C_GRAY_600)
+        pdf.cell(36, 6, _s(label[:18]), new_x=XPos.RIGHT, new_y=YPos.TOP)
+        pdf.set_fill_color(*C_GRAY_100)
+        pdf.rect(BAR_X, y + 1.5, BAR_W, 3.5, style="F")
+        if bar_pct > 0:
+            pdf.set_fill_color(*color)
+            pdf.rect(BAR_X, y + 1.5, BAR_W * bar_pct, 3.5, style="F")
+        pdf.set_xy(BAR_X + BAR_W + 2, y)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_text_color(*C_GRAY_900)
+        pdf.cell(18, 6, _s(suffix), new_x=XPos.RIGHT, new_y=YPos.TOP)
+        pdf.set_xy(BAR_X + BAR_W + 22, y)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(*C_GRAY_600)
+        pdf.cell(W - BAR_W - 60, 6, _s(show_val), align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.set_text_color(*C_GRAY_900)
+
+    gap = 3
+    cw = (W - gap * 3) / 4
+    section_title("PRODUCAO DE LEITE")
+    y0 = pdf.get_y()
+    kpi_card(ML,              y0, cw, 22, "Total do Mes",  f"{total_prod:,.0f}".replace(",","."), "litros", C_GREEN_PALE, C_GREEN_DARK)
+    kpi_card(ML+cw+gap,       y0, cw, 22, "Media Diaria",  f"{media_dia:.1f}", "L / dia",        C_BLUE_LIGHT, C_BLUE)
+    kpi_card(ML+(cw+gap)*2,   y0, cw, 22, "Vacas Lactacao",str(vacas_lact),    "animais",        C_GREEN_PALE, C_GREEN_MED)
+    kpi_card(ML+(cw+gap)*3,   y0, cw, 22, "Registros",     str(len(prod_docs)),"lancamentos",    C_GRAY_100, C_GRAY_600)
+    pdf.set_y(y0 + 26)
+
+    if top_animais:
+        section_title("TOP ANIMAIS - PRODUCAO DO MES")
+        max_anim = top_animais[0][1]
+        for nome_a, litros in top_animais:
+            pct = litros / total_prod * 100 if total_prod > 0 else 0
+            bar_row(nome_a, litros, max_anim, f"{pct:.1f}%", C_GREEN_MED, f"{litros:,.0f} L".replace(",","."))
+
+    fw = (W - gap * 2) / 3
+    section_title("RESUMO FINANCEIRO")
+    y1 = pdf.get_y()
+    bg_s = C_GREEN_PALE if saldo >= 0 else C_RED_LIGHT
+    c_s  = C_GREEN_DARK if saldo >= 0 else C_RED
+    kpi_card(ML,          y1, fw, 22, "Receitas (Venda de Leite)", brl(total_rec),  "", C_GREEN_PALE, C_GREEN_DARK)
+    kpi_card(ML+fw+gap,   y1, fw, 22, "Despesas Totais",           brl(total_desp), "", C_RED_LIGHT,  C_RED)
+    kpi_card(ML+(fw+gap)*2,y1,fw, 22, "Saldo do Mes",              brl(saldo),      "", bg_s, c_s)
+    pdf.set_y(y1 + 26)
+
+    if desp_cats:
+        section_title("DESPESAS POR CATEGORIA")
+        max_cat = desp_cats[0][1]
+        for cat, val in desp_cats:
+            pct = val / total_desp * 100 if total_desp > 0 else 0
+            bar_row(cat, val, max_cat, f"{pct:.1f}%", C_RED, brl(val))
+
+    tw = (W - gap * 2) / 3
+    section_title("CUSTO POR LITRO - KPI MENSAL")
+    y2 = pdf.get_y()
+    bg_m = C_GREEN_PALE if margem_litro >= 0 else C_AMBER_LIGHT
+    c_m  = C_GREEN_DARK if margem_litro >= 0 else C_AMBER
+    kpi_card(ML,           y2, tw, 22, "Custo / Litro",          f"R$ {custo_litro:.2f}",    "despesas / producao", C_RED_LIGHT,  C_RED)
+    kpi_card(ML+tw+gap,    y2, tw, 22, "Preco Recebido / Litro", f"R$ {preco_litro:.2f}",    "receita / producao",  C_BLUE_LIGHT, C_BLUE)
+    kpi_card(ML+(tw+gap)*2,y2, tw, 22, "Margem / Litro",         f"R$ {margem_litro:+.2f}", "preco - custo",       bg_m, c_m)
+    pdf.set_y(y2 + 26)
+
+    pdf.ln(4)
+    bg_box  = C_GREEN_PALE if margem_litro >= 0 else C_AMBER_LIGHT
+    cor_box = C_GREEN_DARK if margem_litro >= 0 else C_AMBER
+    icon_txt = "Resultado positivo:" if margem_litro >= 0 else "Atencao:"
+    if margem_litro >= 0:
+        analise = (f"Margem de R$ {margem_litro:.2f}/L. "
+                   f"A cada 1.000 litros, a fazenda gerou R$ {margem_litro*1000:.2f} de lucro.")
+    else:
+        analise = (f"Margem negativa de R$ {margem_litro:.2f}/L. "
+                   f"As despesas superaram as receitas em R$ {abs(saldo):.2f} no mes. "
+                   f"Revise as categorias de maior impacto.")
+    ya = pdf.get_y()
+    pdf.set_fill_color(*bg_box)
+    pdf.set_draw_color(*cor_box)
+    pdf.rect(ML, ya, W, 14, style="FD")
+    pdf.set_fill_color(*cor_box)
+    pdf.rect(ML, ya, 3, 14, style="F")
+    pdf.set_xy(ML + 6, ya + 2)
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_text_color(*cor_box)
+    pdf.cell(30, 5, _s(icon_txt), new_x=XPos.RIGHT, new_y=YPos.TOP)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_text_color(*C_GRAY_600)
+    pdf.set_xy(ML + 6 + 31, ya + 2)
+    pdf.multi_cell(W - 40, 5, _s(analise))
+    pdf.set_draw_color(0, 0, 0)
+    pdf.set_text_color(*C_GRAY_900)
+
+    return bytes(pdf.output())
 
 
 def _enviar_typing(para: str, duracao_ms: int = 4000):
