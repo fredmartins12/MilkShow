@@ -1162,15 +1162,23 @@ def relatorio_mensal(user=Depends(_get_user), mes: str = Query(default="")):
     # ── Monta o PDF ────────────────────────────────────────────
     NL = {"new_x": XPos.LMARGIN, "new_y": YPos.NEXT}
 
+    def _s(txt: str) -> str:
+        """Sanitiza string para Latin-1 (Helvetica no fpdf2 sem fonte Unicode)."""
+        return (txt
+                .replace("\u2014", "-").replace("\u2013", "-")
+                .replace("\u2019", "'").replace("\u2018", "'")
+                .replace("\u201c", '"').replace("\u201d", '"')
+                .encode("latin-1", errors="replace").decode("latin-1"))
+
     class PDF(FPDF):
         def header(self):
             self.set_font("Helvetica", "B", 14)
             self.set_fill_color(30, 80, 50)
             self.set_text_color(255, 255, 255)
-            self.cell(0, 12, f"  MilkShow - {nome_fazenda}", fill=True, **NL)
+            self.cell(0, 12, _s(f"  MilkShow - {nome_fazenda}"), fill=True, **NL)
             self.set_text_color(0, 0, 0)
             self.set_font("Helvetica", "", 10)
-            self.cell(0, 6, f"  Relatorio Mensal - {mes_label}", **NL)
+            self.cell(0, 6, _s(f"  Relatorio Mensal - {mes_label}"), **NL)
             self.ln(4)
 
         def footer(self):
@@ -1182,27 +1190,27 @@ def relatorio_mensal(user=Depends(_get_user), mes: str = Query(default="")):
     def section(pdf, titulo):
         pdf.set_font("Helvetica", "B", 11)
         pdf.set_fill_color(230, 245, 235)
-        pdf.cell(0, 8, f"  {titulo}", fill=True, **NL)
+        pdf.cell(0, 8, _s(f"  {titulo}"), fill=True, **NL)
         pdf.ln(2)
 
     def kpi_row(pdf, label, valor, destaque=False):
         pdf.set_font("Helvetica", "B" if destaque else "", 10)
-        pdf.cell(90, 7, f"  {label}", border="B")
+        pdf.cell(90, 7, _s(f"  {label}"), border="B")
         pdf.set_font("Helvetica", "B", 10)
-        pdf.cell(0, 7, valor, border="B", **NL)
+        pdf.cell(0, 7, _s(valor), border="B", **NL)
 
     def table_header(pdf, cols):
         pdf.set_font("Helvetica", "B", 9)
         pdf.set_fill_color(200, 230, 210)
         for label, w in cols:
-            pdf.cell(w, 7, f" {label}", fill=True, border=1)
+            pdf.cell(w, 7, _s(f" {label}"), fill=True, border=1)
         pdf.ln()
 
     def table_row(pdf, values, cols, alt=False):
         pdf.set_font("Helvetica", "", 9)
         pdf.set_fill_color(245, 250, 247) if alt else pdf.set_fill_color(255, 255, 255)
         for (_, w), v in zip(cols, values):
-            pdf.cell(w, 6, f" {v}", fill=True, border=1)
+            pdf.cell(w, 6, _s(f" {v}"), fill=True, border=1)
         pdf.ln()
 
     pdf = PDF()
@@ -1260,11 +1268,11 @@ def relatorio_mensal(user=Depends(_get_user), mes: str = Query(default="")):
     pdf.set_font("Helvetica", "I", 9)
     pdf.set_text_color(80, 80, 80)
     if margem_litro >= 0:
-        pdf.multi_cell(0, 5, f"  Resultado: margem positiva de R$ {margem_litro:.2f}/L. "
-                             f"A cada 1.000 litros, a fazenda gerou R$ {margem_litro*1000:.2f} de lucro.")
+        pdf.multi_cell(0, 5, _s(f"  Resultado: margem positiva de R$ {margem_litro:.2f}/L. "
+                                f"A cada 1.000 litros, a fazenda gerou R$ {margem_litro*1000:.2f} de lucro."))
     else:
-        pdf.multi_cell(0, 5, f"  Atencao: margem negativa de R$ {margem_litro:.2f}/L. "
-                             f"As despesas superaram as receitas em R$ {abs(margem_litro)*total_prod:.2f} no mes.")
+        pdf.multi_cell(0, 5, _s(f"  Atencao: margem negativa de R$ {margem_litro:.2f}/L. "
+                                f"As despesas superaram as receitas em R$ {abs(margem_litro)*total_prod:.2f} no mes."))
 
     # Gera bytes do PDF
     pdf_bytes = pdf.output()
