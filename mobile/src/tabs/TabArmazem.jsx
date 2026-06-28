@@ -225,7 +225,7 @@ export default function TabArmazem() {
   if (loading) return <Loading />
 
   const categorias   = ['Todos', ...new Set(itens.map(i => i.categoria).filter(Boolean))]
-  const alertas      = itens.filter(i => !i.min_alerta || Number(i.qtd) <= Number(i.min_alerta))
+  const alertas      = itens.filter(i => i.min_alerta != null && i.min_alerta !== '' && Number(i.qtd) <= Number(i.min_alerta))
   const filtrados    = filtro === 'Todos' ? itens : itens.filter(i => i.categoria === filtro)
 
   return (
