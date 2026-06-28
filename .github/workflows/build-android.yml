@@ -1,0 +1,89 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mobile/src/**'
+      - 'mobile/public/**'
+      - 'mobile/package.json'
+      - 'mobile/capacitor.config.json'
+      - '.github/workflows/build-android.yml'
+  workflow_dispatch:   # build manual
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Build React PWA
+        run: |
+          cd mobile
+          npm ci
+          npm run build
+
+      - name: Sync Capacitor Android
+        run: |
+          cd mobile
+          npx cap sync android
+
+      - name: Build APK (debug)
+        run: |
+          cd mobile/android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Renomear APK
+        run: |
+          mkdir -p artifacts
+          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk \
+             artifacts/MilkShow-v$(date +%Y%m%d).apk
+
+      - name: Upload APK como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: MilkShow-Android
+          path: artifacts/MilkShow-*.apk
+          retention-days: 30
+
+      - name: Build APK (release assinado) — só quando KEYSTORE_BASE64 configurado
+        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_BASE64:    ${{ secrets.KEYSTORE_BASE64 }}
+          KEY_ALIAS:          ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD:       ${{ secrets.KEY_PASSWORD }}
+          STORE_PASSWORD:     ${{ secrets.STORE_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > mobile/android/milkshow.keystore
+          cd mobile/android
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=milkshow.keystore \
+            -Pandroid.injected.signing.store.password="$STORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASSWORD" \
+            --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk \
+             ../../artifacts/MilkShow-release-$(date +%Y%m%d).apk
+
+      - name: Upload APK release
+        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: MilkShow-Android-Release
+          path: artifacts/MilkShow-release-*.apk
+          retention-days: 30
