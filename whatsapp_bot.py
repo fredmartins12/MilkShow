@@ -555,12 +555,14 @@ def _classificar_pergunta(texto: str) -> set:
     lower = texto.lower()
     secoes: set = set()
 
-    if any(p in lower for p in ['produc', 'ordenh', 'litro', 'leite', 'produziu', 'média', 'media', 'semana']):
+    if any(p in lower for p in ['produc', 'ordenh', 'litro', 'leite', 'produziu', 'produzi',
+                                  'produção', 'producao', 'média', 'media', 'semana', 'quanto leite']):
         secoes.add('producao')
         secoes.add('rebanho')  # IA precisa ver lista de animais para pedir por animal
     if any(p in lower for p in ['financ', 'saldo', 'gasto', 'receita', 'despesa', 'pagou', 'paguei',
                                   'custo do mes', 'lucro do mes', 'quanto recebi', 'quanto gastei',
-                                  'quanto paguei', 'ração custou', 'conta de', 'boleto']):
+                                  'quanto paguei', 'ração custou', 'conta de', 'boleto',
+                                  'gastei', 'despendi', 'balanço', 'balanco', 'lucro', 'prejuizo']):
         secoes.add('financeiro')
     if any(p in lower for p in ['fazer hoje', 'fazer semana', 'tarefa', 'pendente', 'agenda',
                                   'essa semana', 'esta semana', 'o que tem', 'previsao', 'previsão',
@@ -1304,15 +1306,23 @@ Retorne SOMENTE: {"dominio":"...","tipo":"..."}
 """
 
 SYSTEM_PRODUCAO = """Você é o agente de PRODUÇÃO do MilkShow, assistente de fazenda leiteira.
-Registre ordenha individual, produções múltiplas e vendas de leite.
+Registre ordenha individual, produções múltiplas e vendas de leite. Responda também perguntas sobre produção.
 
 ANIMAIS EM LACTAÇÃO:
 {animais}
+
+DADOS DE PRODUÇÃO DA FAZENDA (para responder consultas):
+{dados_fazenda}
 
 MEMÓRIA DA FAZENDA:
 {memoria}
 
 {ultimo_salvo_bloco}
+
+PERGUNTA sobre produção — produtor quer saber dados, NÃO registrar
+  Exemplos: "quanto produzi hoje?", "qual a produção da semana?", "quanto produziu a Estrela?"
+  Use estado CONSULTA. Responda com os DADOS DE PRODUÇÃO DA FAZENDA acima. Máximo 4 linhas.
+  Se os dados não estiverem no contexto → estado SEM_RESPOSTA.
 
 TIPOS QUE VOCÊ GERENCIA:
 
@@ -1351,15 +1361,23 @@ APAGAR_PRODUCAO — apagar registro de produção incorreto ou duplicado
 """ + _COMMON_TAIL
 
 SYSTEM_FINANCEIRO = """Você é o agente FINANCEIRO do MilkShow, assistente de fazenda leiteira.
-Registre compras de produtos, despesas operacionais, vendas e compras de animais.
+Registre compras de produtos, despesas operacionais, vendas e compras de animais. Responda também perguntas financeiras.
 
 ESTOQUE ATUAL (para inferir categoria):
 {estoque}
+
+RESUMO FINANCEIRO DA FAZENDA (para responder consultas):
+{dados_fazenda}
 
 MEMÓRIA DA FAZENDA:
 {memoria}
 
 {ultimo_salvo_bloco}
+
+PERGUNTA financeira — produtor quer saber dados, NÃO registrar
+  Exemplos: "qual meu saldo?", "quanto gastei?", "quanto recebi esse mês?", "minhas despesas"
+  Use estado CONSULTA. Responda com o RESUMO FINANCEIRO acima. Máximo 4 linhas diretas.
+  Se os dados não estiverem no contexto → estado SEM_RESPOSTA.
 
 TIPOS QUE VOCÊ GERENCIA:
 
@@ -1881,6 +1899,44 @@ def _pre_classificar_keywords(texto: str) -> tuple[str, str] | None:
     import re as _re
     lower = texto.lower()
 
+    # ── Consultas diretas — SEMPRE rotar para consulta antes de qualquer outro padrão
+    _consulta_producao = [
+        'quanto produzi', 'quanto produz', 'produzi hoje', 'produção de hoje',
+        'producao de hoje', 'produção hoje', 'producao hoje',
+        'produção da semana', 'producao da semana', 'produção do mês', 'producao do mes',
+        'quanto produziu', 'produziu hoje', 'produção total', 'producao total',
+        'quantos litros', 'quantas ordenhas', 'qual foi a produção', 'qual foi a producao',
+        'quanto leite', 'total de leite', 'minha produção', 'minha producao',
+    ]
+    _consulta_financeiro = [
+        'qual meu saldo', 'meu saldo', 'qual o saldo', 'saldo do mês', 'saldo do mes',
+        'saldo atual', 'quanto gastei', 'quanto despendi', 'quanto paguei no mês',
+        'quanto recebi', 'quanto entrou', 'minhas despesas', 'minhas receitas',
+        'resumo financeiro', 'balanço', 'balanco', 'lucro do mês', 'lucro do mes',
+        'prejuízo do mês', 'prejuizo do mes', 'financeiro do mês', 'financeiro do mes',
+        'quanto custou', 'quanto foi o gasto', 'quanto gastei esse mês',
+    ]
+    _consulta_rebanho = [
+        'quantos animais', 'quantas vacas', 'quais vacas', 'quais animais',
+        'vacas em lactação', 'vacas em gestação', 'vacas secas', 'vacas prenhas',
+        'situação do rebanho', 'situacao do rebanho', 'status do rebanho',
+        'me fala do rebanho', 'como estão as vacas', 'como estao as vacas',
+    ]
+    _consulta_geral = [
+        'resumo da fazenda', 'como está a fazenda', 'como esta a fazenda',
+        'situação da fazenda', 'me dá um resumo', 'me da um resumo',
+        'o que tem pendente', 'o que ta pendente', 'o que precisa', 'o que fazer hoje',
+        'agenda de hoje', 'tem alguma pendência',
+    ]
+    if any(k in lower for k in _consulta_producao):
+        return ("consulta", "PERGUNTA")
+    if any(k in lower for k in _consulta_financeiro):
+        return ("consulta", "PERGUNTA")
+    if any(k in lower for k in _consulta_rebanho):
+        return ("consulta", "PERGUNTA")
+    if any(k in lower for k in _consulta_geral):
+        return ("consulta", "PERGUNTA")
+
     # ── Serviço externo (vet pago por fora) — ANTES dos meds para evitar conflito com "vacinar"
     if any(k in lower for k in ['paguei veterinário','paguei o veterinário','paguei vet ',
                                   'paguei o vet','visita do vet','honorários do vet',
@@ -2005,11 +2061,13 @@ def _chamar_agente(dominio: str, historico: list, animais: str, estoque: str,
     if dominio == "producao":
         system = (SYSTEM_PRODUCAO
                   .replace("{animais}", animais)
+                  .replace("{dados_fazenda}", dados_fazenda or "")
                   .replace("{memoria}", mem)
                   .replace("{ultimo_salvo_bloco}", ultimo_salvo_bloco))
     elif dominio == "financeiro":
         system = (SYSTEM_FINANCEIRO
                   .replace("{estoque}", estoque)
+                  .replace("{dados_fazenda}", dados_fazenda or "")
                   .replace("{memoria}", mem)
                   .replace("{ultimo_salvo_bloco}", ultimo_salvo_bloco))
     elif dominio == "rebanho":
@@ -2455,9 +2513,22 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
         dominio_hint = None  # será descoberto pelo classificador
 
     # Carrega dados_fazenda conforme o domínio
-    if dominio_hint in ("consulta", "config") or (dominio_hint is None and _classificar_pergunta(texto)):
-        secoes = _classificar_pergunta(texto)
-        dados_fazenda = _ctx_dados_fazenda(fazenda_id, secoes) if secoes else _ctx_dados_fazenda(fazenda_id, None)
+    # Também carrega para producao/financeiro quando o texto parece ser uma consulta
+    _lower_txt = texto.lower()
+    _eh_consulta = (
+        dominio_hint in ("consulta", "config")
+        or (dominio_hint is None and _classificar_pergunta(texto))
+        or (dominio_hint in ("producao", "financeiro", "rebanho", "armazem")
+            and any(p in _lower_txt for p in [
+                '?', 'quanto', 'qual', 'quando', 'como', 'me fala', 'me diz',
+                'produzi', 'produção de', 'producao de', 'produziu',
+                'saldo', 'gastei', 'recebi', 'despesas', 'receitas',
+                'tenho de', 'quanto tem', 'estoque',
+            ]))
+    )
+    if _eh_consulta:
+        secoes = _classificar_pergunta(texto) or {'rebanho', 'producao', 'financeiro', 'estoque'}
+        dados_fazenda = _ctx_dados_fazenda(fazenda_id, secoes)
     else:
         dados_fazenda = ""
 
