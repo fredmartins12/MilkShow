@@ -695,10 +695,10 @@ def _ctx_dados_fazenda(fazenda_id: str, secoes: set = None) -> str:
             rec_mes, des_mes = _fin_resumo(fin_mes_raw)
             rec_ant, des_ant = _fin_resumo(fin_ant_raw)
             ctx.append(f"\nFINANCEIRO MES ATUAL: "
-                       f"Receitas R${rec_mes:.0f} / Despesas R${des_mes:.0f} / "
-                       f"Saldo R${rec_mes - des_mes:.0f}")
-            ctx.append(f"  Mes anterior: Receitas R${rec_ant:.0f} / Despesas R${des_ant:.0f} / "
-                       f"Saldo R${rec_ant - des_ant:.0f}")
+                       f"Receitas R${rec_mes:.2f} / Despesas R${des_mes:.2f} / "
+                       f"Saldo R${rec_mes - des_mes:.2f}")
+            ctx.append(f"  Mes anterior: Receitas R${rec_ant:.2f} / Despesas R${des_ant:.2f} / "
+                       f"Saldo R${rec_ant - des_ant:.2f}")
             # Totais por categoria (para perguntas como "quanto gastei com ração?")
             por_cat: dict = {}
             for d in fin_mes_raw:
@@ -706,14 +706,14 @@ def _ctx_dados_fazenda(fazenda_id: str, secoes: set = None) -> str:
                 por_cat[c] = por_cat.get(c, 0) + d.get('valor', 0)
             if por_cat:
                 ctx.append("  Por categoria: " + " | ".join(
-                    f"{c} R${v:.0f}" for c, v in sorted(por_cat.items(), key=lambda x: -x[1])
+                    f"{c} R${v:.2f}" for c, v in sorted(por_cat.items(), key=lambda x: -x[1])
                 ))
             ultimos = sorted(fin_mes_raw, key=lambda d: d.get('data', ''), reverse=True)[:8]
             if ultimos:
                 ctx.append("  Ultimos lancamentos:")
                 for d in ultimos:
                     ctx.append(f"    [{d.get('data','')}] {d.get('cat','')} — "
-                                f"{d.get('desc','')} R${d.get('valor', 0):.0f}")
+                                f"{d.get('desc','')} R${d.get('valor', 0):.2f}")
         except Exception:
             pass
 

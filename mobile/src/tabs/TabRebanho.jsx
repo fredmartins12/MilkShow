@@ -74,6 +74,7 @@ function AnimalPanel({ animal, onClose, onSaved, onDelete, sanitario }) {
   const [lacInfo, setLacInfo] = useState(null)
 
   useEffect(() => {
+    if (!animal.nome) return
     setLoadProd(true)
     setLacInfo(null)
     api.lactacao(animal.nome, 120)
