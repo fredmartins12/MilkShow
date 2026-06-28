@@ -3,7 +3,7 @@ name: Deploy MilkShow
 on:
   push:
     branches: [main]
-  workflow_dispatch:   # permite disparo manual
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -11,6 +11,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Build frontend React
+        run: |
+          cd mobile
+          npm ci
+          npm run build
 
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
@@ -20,37 +33,31 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -e
-            cd /opt/milkshow
-
-            # Sincroniza arquivos (sem sobrescrever .env e firebase_key.json)
-            git fetch origin main
-
-            # Verifica se mobile mudou antes de resetar os arquivos
-            MOBILE_MUDOU=$(git diff HEAD origin/main --name-only 2>/dev/null | grep -c 'mobile/' || true)
-
-            git checkout origin/main -- \
-              gestor.py utils.py whatsapp_bot.py mobile_api.py \
-              mobile/ pages/ deploy/ docs/ 2>/dev/null || \
-            git checkout origin/main -- \
-              gestor.py utils.py whatsapp_bot.py mobile_api.py
-
-            # Rebuild do app mobile se arquivos mudaram
-            if [ "$MOBILE_MUDOU" -gt 0 ] && [ -d mobile ]; then
-              echo "Mobile mudou ($MOBILE_MUDOU arquivo(s)) — rebuilding..."
-              cd mobile && npm install --legacy-peer-deps && npm run build
-              cp -r dist/. ../mobile_app/
-              cd ..
-              echo "Build concluído — assets copiados para mobile_app/"
-            else
-              echo "Mobile sem alterações — skip build"
-            fi
-
-            # Reinicia MilkShow bot
-            systemctl restart milkshow-bot
+            git -C /opt/milkshow fetch origin main
+            git -C /opt/milkshow checkout origin/main -- \
+              whatsapp_bot.py mobile_api.py nutricao.py \
+              mobile/src mobile/index.html mobile/package.json mobile/vite.config.js \
+              deploy/ firestore.rules requirements.txt 2>/dev/null || true
+            /opt/milkshow/venv/bin/pip install --quiet -r /opt/milkshow/requirements.txt
+            cp /opt/milkshow/deploy/nginx.conf /etc/nginx/sites-available/milkshow
+            nginx -t && systemctl reload nginx
+            systemctl stop milkshow-bot
+            fuser -k 8000/tcp 2>/dev/null || true
             sleep 2
-            systemctl is-active milkshow-bot || { journalctl -u milkshow-bot -n 20; exit 1; }
-
+            systemctl start milkshow-bot
+            sleep 4
+            systemctl is-active milkshow-bot || { journalctl -u milkshow-bot -n 20 --no-pager; exit 1; }
             echo "Deploy concluído!"
+
+      - name: Upload dist para servidor
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: 178.104.252.193
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "mobile/dist/."
+          target: "/opt/milkshow/mobile/dist/"
+          rm: true
 
       - name: Notify on failure
         if: failure()
