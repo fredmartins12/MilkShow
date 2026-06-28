@@ -2,15 +2,37 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#22c55e" />
     <meta name="description" content="Gestão inteligente de fazendas leiteiras" />
+
+    <!-- PWA Android -->
     <meta name="mobile-web-app-capable" content="yes" />
+
+    <!-- PWA iOS — configuração obrigatória para funcionar como app no iPhone -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="MilkShow" />
-    <link rel="apple-touch-icon" href="/app/icon.svg" />
+
+    <!-- Ícone para iPhone (PNG obrigatório — iOS não aceita SVG) -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/app/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="192x192" href="/app/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="512x512" href="/app/icon-512.png" />
+
+    <!-- Splash screens iPhone (evita tela branca ao abrir) -->
+    <meta name="apple-mobile-web-app-orientations" content="portrait" />
+    <link rel="apple-touch-startup-image"
+          media="screen and (device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3)"
+          href="/app/splash-iphone14.png" />
+    <link rel="apple-touch-startup-image"
+          media="screen and (device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3)"
+          href="/app/splash-iphone15.png" />
+    <link rel="apple-touch-startup-image"
+          media="screen and (device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2)"
+          href="/app/splash-iphone8.png" />
+
     <link rel="icon" type="image/svg+xml" href="/app/icon.svg" />
+    <link rel="manifest" href="/app/manifest.webmanifest" />
     <title>MilkShow — Gestão Leiteira</title>
   </head>
   <body>

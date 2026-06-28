@@ -45,10 +45,7 @@ export default defineConfig({
           { src: '/app/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
           { src: '/app/icon.svg',     sizes: 'any',     type: 'image/svg+xml', purpose: 'any' },
         ],
-        screenshots: [
-          { src: '/app/screenshot-desktop.png', sizes: '1536x864', type: 'image/png', form_factor: 'wide', label: 'Dashboard MilkShow' },
-          { src: '/app/screenshot-mobile.png',  sizes: '390x844',  type: 'image/png', form_factor: 'narrow', label: 'MilkShow no celular' },
-        ],
+        lang: 'pt-BR',
       },
     }),
   ],

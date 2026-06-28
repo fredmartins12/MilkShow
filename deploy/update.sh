@@ -20,18 +20,18 @@ echo "[2/5] Dependências Python..."
 "$APP_DIR/venv/bin/pip" install --quiet --upgrade pip
 "$APP_DIR/venv/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
 
-echo "[3/5] Build do frontend React..."
-if [ -d "$FRONTEND_DIR" ]; then
-    cd "$FRONTEND_DIR"
-    # Instala dependências Node se necessário
-    if ! command -v node &>/dev/null; then
-        curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs
-    fi
-    npm ci --silent
-    npm run build
-    echo "   Frontend compilado em $FRONTEND_DIR/dist/"
-else
-    echo "   AVISO: pasta $FRONTEND_DIR não encontrada, pulando build do frontend"
+echo "[3/5] Frontend — recebe dist via GitHub Actions (não builda no servidor)"
+# O dist é enviado pela pipeline CI/CD local via tar — não precisa de Node aqui.
+# Se o dist não existir ou estiver corrompido, avisa mas não bloqueia.
+if [ ! -f "$FRONTEND_DIR/dist/index.html" ]; then
+    echo "   AVISO: $FRONTEND_DIR/dist/index.html não encontrado."
+    echo "   Execute o deploy local para enviar o frontend atualizado."
+fi
+# Garante permissões corretas (evita 403)
+if [ -d "$FRONTEND_DIR/dist" ]; then
+    find "$FRONTEND_DIR/dist" -type d -exec chmod 755 {} \;
+    find "$FRONTEND_DIR/dist" -type f -exec chmod 644 {} \;
+    echo "   Permissões do dist OK"
 fi
 
 echo "[4/5] Reiniciando Evolution API..."
