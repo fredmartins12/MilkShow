@@ -52,6 +52,8 @@ export const api = {
   sanitario:            (dias = 90)      => req('GET',  `/sanitario?dias=${dias}`),
   registrarSanitario:   (body)           => req('POST', '/sanitario',        body),
   executarSanitario:    (id)             => req('PATCH', `/sanitario/${id}/executar`),
+  registrarSanitarioLote: (animais, base) =>
+    Promise.all(animais.map(nome => req('POST', '/sanitario', { ...base, animal: nome }))),
 
   // Estoque / Armazém
   estoque:              ()               => req('GET',    '/estoque'),
@@ -62,6 +64,14 @@ export const api = {
   // Config
   config:               ()               => req('GET',  '/config'),
   salvarConfig:         (body)           => req('POST', '/config',           body),
+
+  // Usuários WhatsApp
+  usuariosWpp:          ()               => req('GET',    '/usuarios_wpp'),
+  adicionarUsuarioWpp:  (body)           => req('POST',   '/usuarios_wpp',    body),
+  removerUsuarioWpp:    (tel)            => req('DELETE', `/usuarios_wpp/${encodeURIComponent(tel)}`),
+
+  // Chat IA (mesma lógica do bot WhatsApp)
+  chat:                 (mensagem)       => req('POST',   '/chat',             { mensagem }),
 
   // Curva de lactação por animal
   lactacao:             (nome, dias=120) => req('GET',  `/lactacao/${encodeURIComponent(nome)}?dias=${dias}`),
@@ -84,7 +94,7 @@ export const api = {
     return res.blob()
   },
 
-  // Ranking de rentabilidade
+  // Ranking de rentabilidade (legado)
   ranking:              (dias = 30)      => req('GET',  `/ranking?dias=${dias}`),
 
   // SSE — atualizações em tempo real
@@ -92,4 +102,11 @@ export const api = {
     const token = getToken()
     return new EventSource(`${BASE}/eventos?token=${encodeURIComponent(token)}`)
   },
+
+  // Métodos genéricos para novos endpoints (Nutrição, Rankings avançados, etc.)
+  get:    (path)        => req('GET',    path),
+  post:   (path, body)  => req('POST',   path, body),
+  put:    (path, body)  => req('PUT',    path, body),
+  patch:  (path, body)  => req('PATCH',  path, body),
+  delete: (path)        => req('DELETE', path),
 }

@@ -8,8 +8,9 @@
 import { useEffect, useState, useMemo } from 'react'
 import {
   Search, X, RefreshCw, Trash2, Pencil, Check, Plus,
-  Milk, CalendarDays, Clock, TrendingUp, ShieldCheck, ChevronRight,
+  Milk, CalendarDays, Clock, TrendingUp, ShieldCheck, ChevronRight, AlertTriangle,
 } from 'lucide-react'
+import { IconRebanho } from '../components/IconRebanho.jsx'
 import {
   ComposedChart, AreaChart, Area, Line,
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
@@ -17,7 +18,7 @@ import {
 import { api } from '../api.js'
 import {
   Loading, ErrorMsg, Toast, Modal, SectionHeader,
-  Field, Input, Select, Textarea, Btn,
+  Field, Input, Select, Textarea, Btn, Empty,
   T, fmtDate, dataParto, idadeDias,
 } from '../ui.jsx'
 
@@ -31,7 +32,7 @@ const SEXOS       = ['Fêmea', 'Macho']
 const STATUS_COLOR = {
   'Lactação': { bg: 'rgba(22,163,74,0.12)',  border: '#16a34a40', dot: '#16a34a' },
   'Seca':     { bg: 'rgba(234,179,8,0.10)',  border: '#ca8a0440', dot: '#ca8a04' },
-  'Gestação': { bg: 'rgba(59,130,246,0.10)', border: '#3b82f640', dot: '#3b82f6' },
+  'Gestação': { bg: 'rgba(59,130,246,0.10)', border: '#22c55e40', dot: '#22c55e' },
   'Novilha':  { bg: 'rgba(167,139,250,0.10)',border: '#7c3aed40', dot: '#a78bfa' },
   'Bezerro':  { bg: 'rgba(251,146,60,0.10)', border: '#ea580c40', dot: '#fb923c' },
 }
@@ -131,12 +132,12 @@ function AnimalPanel({ animal, onClose, onSaved, onDelete, sanitario }) {
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end"
-         style={{ background: 'rgba(2,6,23,0.6)', backdropFilter: 'blur(4px)' }}
+         style={{ background: 'rgba(2,8,4,0.7)', backdropFilter: 'blur(4px)' }}
          onClick={onClose}>
       <div className="h-full overflow-y-auto flex flex-col"
            style={{
              width: 'min(520px, 100vw)',
-             background: '#080e1d',
+             background: '#061209',
              borderLeft: `1px solid ${T.border}`,
            }}
            onClick={e => e.stopPropagation()}>
@@ -152,7 +153,7 @@ function AnimalPanel({ animal, onClose, onSaved, onDelete, sanitario }) {
               <div className="flex items-center gap-2 mt-1.5">
                 <StatusPill status={animal.status} />
                 {animal.raca && (
-                  <span className="text-slate-500 text-xs font-mono">{animal.raca}</span>
+                  <span className="text-slate-500 text-xs">{animal.raca}</span>
                 )}
               </div>
             )}
@@ -194,7 +195,7 @@ function AnimalPanel({ animal, onClose, onSaved, onDelete, sanitario }) {
           {/* Ficha — modo edição */}
           {editMode ? (
             <section>
-              <p className="text-[11px] font-mono uppercase tracking-widest text-slate-500 mb-4">{isNovo ? 'Ficha do Animal' : 'Editar Ficha'}</p>
+              <p className="text-[11px] font-medium uppercase tracking-widest text-slate-500 mb-4">{isNovo ? 'Ficha do Animal' : 'Editar Ficha'}</p>
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <Field label="Nome *">
@@ -238,7 +239,7 @@ function AnimalPanel({ animal, onClose, onSaved, onDelete, sanitario }) {
           ) : (
             /* Ficha — modo visualização */
             <section>
-              <p className="text-[11px] font-mono uppercase tracking-widest text-slate-500 mb-3">Ficha</p>
+              <p className="text-[11px] font-medium uppercase tracking-widest text-slate-500 mb-3">Ficha</p>
               <div className="grid grid-cols-2 gap-3">
                 {[
                   { label: 'Sexo',          value: animal.sexo || '—',                                                        Icon: null },
@@ -254,16 +255,16 @@ function AnimalPanel({ animal, onClose, onSaved, onDelete, sanitario }) {
                        style={{ background: T.surface, border: `1px solid ${T.border}` }}>
                     <div className="flex items-center gap-1.5 mb-1">
                       {Icon && <Icon size={11} className="text-slate-600" />}
-                      <span className="text-[10px] font-mono uppercase tracking-widest text-slate-600">{label}</span>
+                      <span className="text-[10px] font-medium uppercase tracking-widest text-slate-500">{label}</span>
                     </div>
-                    <span className="text-sm font-mono text-slate-200 font-medium">{value}</span>
+                    <span className="text-sm text-slate-200 font-medium">{value}</span>
                   </div>
                 ))}
               </div>
               {animal.obs && (
-                <div className="mt-3 rounded-lg p-3 text-xs font-mono text-slate-400"
+                <div className="mt-3 rounded-lg p-3 text-xs text-slate-400"
                      style={{ background: T.surface, border: `1px solid ${T.border}` }}>
-                  <span className="text-slate-600 uppercase tracking-wider text-[10px]">Obs: </span>
+                  <span className="text-slate-500 uppercase tracking-wider text-[10px] font-medium">Obs: </span>
                   {animal.obs}
                 </div>
               )}
@@ -274,9 +275,9 @@ function AnimalPanel({ animal, onClose, onSaved, onDelete, sanitario }) {
           {!editMode && (
             <section>
               <div className="flex items-center justify-between mb-3">
-                <p className="text-[11px] font-mono uppercase tracking-widest text-slate-500">Curva de Lactação</p>
+                <p className="text-[11px] font-medium uppercase tracking-widest text-slate-500">Curva de Lactação</p>
                 {!loadProd && lacInfo && (
-                  <div className="flex items-center gap-3 text-[11px] font-mono">
+                  <div className="flex items-center gap-3 text-[11px]">
                     {lacInfo.dim_atual != null && (
                       <span className="text-slate-600">DIM <span className="text-slate-300 tabular-nums">{lacInfo.dim_atual}d</span></span>
                     )}
@@ -289,21 +290,21 @@ function AnimalPanel({ animal, onClose, onSaved, onDelete, sanitario }) {
 
               {/* Alerta de queda acelerada */}
               {!loadProd && lacInfo?.queda_pct != null && lacInfo.queda_pct >= 35 && (
-                <div className="mb-3 px-3 py-2 rounded-lg text-[11px] font-mono flex items-center gap-2"
+                <div className="mb-3 px-3 py-2 rounded-lg text-[11px] flex items-center gap-2"
                      style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171' }}>
-                  <span>⚠</span>
+                  <AlertTriangle size={12} className="shrink-0" />
                   <span>Queda acelerada: {lacInfo.queda_pct.toFixed(0)}% abaixo da curva esperada — candidata a secar</span>
                 </div>
               )}
 
               {loadProd ? (
                 <div className="h-[130px] flex items-center justify-center">
-                  <span className="text-slate-700 text-xs font-mono animate-pulse">carregando...</span>
+                  <span className="text-slate-600 text-xs animate-pulse">carregando...</span>
                 </div>
               ) : prod.length === 0 ? (
                 <div className="h-[130px] flex items-center justify-center rounded-lg"
                      style={{ background: T.surface, border: `1px solid ${T.border}` }}>
-                  <span className="text-slate-700 text-xs font-mono">sem registros de produção</span>
+                  <span className="text-slate-600 text-xs">sem registros de produção</span>
                 </div>
               ) : (
                 <div className="rounded-lg overflow-hidden"
@@ -326,7 +327,7 @@ function AnimalPanel({ animal, onClose, onSaved, onDelete, sanitario }) {
                           const esp  = payload.find(p => p.dataKey === 'esperado')
                           const dim  = payload[0]?.payload?.dim
                           return (
-                            <div style={{ background: '#0f172a', border: `1px solid ${T.border}` }}
+                            <div style={{ background: '#0b1510', border: `1px solid ${T.border}` }}
                                  className="rounded px-2.5 py-1.5 text-[11px] font-mono space-y-0.5">
                               <div className="text-slate-500">{label}{dim != null ? ` · DIM ${dim}` : ''}</div>
                               {real?.value != null && (
@@ -352,14 +353,14 @@ function AnimalPanel({ animal, onClose, onSaved, onDelete, sanitario }) {
                   <div className="flex items-center gap-4 px-4 pb-2.5 pt-1">
                     <div className="flex items-center gap-1.5">
                       <span className="w-4 h-px inline-block" style={{ background: '#16a34a', display: 'inline-block', verticalAlign: 'middle' }} />
-                      <span className="text-[10px] font-mono text-slate-600">Real</span>
+                      <span className="text-[10px] text-slate-500">Real</span>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <svg width="16" height="2" className="inline-block" style={{ verticalAlign: 'middle' }}>
                         <line x1="0" y1="1" x2="5" y2="1" stroke="#f59e0b" strokeWidth="1.5" />
                         <line x1="8" y1="1" x2="13" y2="1" stroke="#f59e0b" strokeWidth="1.5" />
                       </svg>
-                      <span className="text-[10px] font-mono text-slate-600">Esperado (Wood)</span>
+                      <span className="text-[10px] text-slate-500">Esperado (Wood)</span>
                     </div>
                   </div>
                 </div>
@@ -370,11 +371,11 @@ function AnimalPanel({ animal, onClose, onSaved, onDelete, sanitario }) {
           {/* Sanitário */}
           {!editMode && (
             <section>
-              <p className="text-[11px] font-mono uppercase tracking-widest text-slate-500 mb-3">Histórico Sanitário</p>
+              <p className="text-[11px] font-medium uppercase tracking-widest text-slate-500 mb-3">Histórico Sanitário</p>
               {sanAnimal.length === 0 ? (
                 <div className="rounded-lg p-4 text-center"
                      style={{ background: T.surface, border: `1px solid ${T.border}` }}>
-                  <span className="text-slate-700 text-xs font-mono">nenhum protocolo registrado</span>
+                  <span className="text-slate-600 text-xs">nenhum protocolo registrado</span>
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -385,13 +386,13 @@ function AnimalPanel({ animal, onClose, onSaved, onDelete, sanitario }) {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-sm font-medium text-slate-200 truncate">{s.protocolo || s.tipo}</span>
-                          <span className="text-[10px] font-mono text-slate-600 shrink-0">{fmtDate(s.data)}</span>
+                          <span className="text-[10px] text-slate-500 font-mono tabular-nums shrink-0">{fmtDate(s.data)}</span>
                         </div>
                         <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-[10px] font-mono text-slate-600">{s.tipo}</span>
+                          <span className="text-[10px] text-slate-500">{s.tipo}</span>
                           {s.executado
-                            ? <span className="text-[10px] font-mono text-emerald-500">executado</span>
-                            : <span className="text-[10px] font-mono text-amber-500">pendente</span>
+                            ? <span className="text-[10px] text-emerald-500">executado</span>
+                            : <span className="text-[10px] text-amber-500">pendente</span>
                           }
                         </div>
                       </div>
@@ -433,6 +434,12 @@ export default function TabRebanho() {
 
   useEffect(() => { carregar() }, [])
 
+  useEffect(() => {
+    const onRefresh = () => carregar()
+    window.addEventListener('milkshow:refresh', onRefresh)
+    return () => window.removeEventListener('milkshow:refresh', onRefresh)
+  }, [])
+
   async function remover(animal) {
     try {
       await api.removerAnimal(animal.id)
@@ -473,32 +480,36 @@ export default function TabRebanho() {
       {erro && <ErrorMsg msg={erro} onRetry={carregar} />}
 
       {/* Barra de busca + atualizar */}
-      <div className="flex items-center gap-3 px-5 py-3.5 shrink-0"
-           style={{ borderBottom: `1px solid ${T.border}` }}>
+      <div className="flex items-center gap-2 px-4 py-3 shrink-0 bg-white"
+           style={{ borderBottom: '1px solid #e8ede8' }}>
         <div className="relative flex-1">
-          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" />
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: '#8aaa85' }} />
           <input
             value={busca}
             onChange={e => setBusca(e.target.value)}
             placeholder="Buscar por nome..."
-            className="w-full pl-10 pr-8 py-2.5 text-sm rounded-lg bg-transparent text-slate-300 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-emerald-600/40"
-            style={{ border: `1px solid ${T.border}` }}
+            className="w-full text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-green-200"
+            style={{
+              paddingLeft: 36, paddingRight: busca ? 32 : 12, paddingTop: 9, paddingBottom: 9,
+              border: '1px solid #d4e6d4', background: '#f8faf8', color: '#1a2e1a',
+            }}
           />
           {busca && (
             <button onClick={() => setBusca('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-400 transition-colors">
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 transition-colors"
+              style={{ color: '#8aaa85' }}>
               <X size={13} />
             </button>
           )}
         </div>
         <select value={filtroRaca} onChange={e => setRaca(e.target.value)}
-          className="text-xs font-mono rounded-lg px-3 py-2.5 text-slate-400 focus:outline-none shrink-0"
-          style={{ background: T.surface, border: `1px solid ${T.border}` }}>
+          className="text-xs rounded-lg px-3 py-2.5 text-slate-600 focus:outline-none shrink-0"
+          style={{ background: '#fff', border: '1px solid #d4e6d4' }}>
           {racasPresentes.map(r => <option key={r}>{r}</option>)}
         </select>
         <button onClick={carregar} aria-label="Atualizar"
-          className="p-2.5 rounded-lg text-slate-500 hover:text-slate-300 transition-colors shrink-0"
-          style={{ border: `1px solid ${T.border}` }}>
+          className="p-2.5 rounded-lg transition-colors shrink-0 hover:bg-slate-50"
+          style={{ border: '1px solid #d4e6d4', color: '#8aaa85' }}>
           <RefreshCw size={13} />
         </button>
         <Btn variant="primary" size="sm" onClick={() => setSel(ANIMAL_VAZIO)}>
@@ -508,19 +519,18 @@ export default function TabRebanho() {
       </div>
 
       {/* Filtros de status — pills */}
-      <div className="flex items-center gap-2 px-5 py-3 shrink-0 overflow-x-auto"
-           style={{ borderBottom: `1px solid ${T.border}` }}>
+      <div className="flex items-center gap-2 px-4 py-2.5 shrink-0 overflow-x-auto bg-white"
+           style={{ borderBottom: '1px solid #e8ede8' }}>
         {toast && <Toast msg={toast.msg} tipo={toast.tipo} onClose={() => setToast(null)} />}
 
         <button onClick={() => setStatus('Todos')}
-          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all shrink-0"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0"
           style={{
-            background: filtroStatus === 'Todos' ? '#1e293b' : 'transparent',
-            border: `1px solid ${filtroStatus === 'Todos' ? '#334155' : 'transparent'}`,
-            color: filtroStatus === 'Todos' ? '#cbd5e1' : '#64748b',
+            background: filtroStatus === 'Todos' ? '#22c55e' : '#f0f4f0',
+            color: filtroStatus === 'Todos' ? '#fff' : '#4a6741',
           }}>
           Todos
-          <span className="font-mono tabular-nums">{animais.length}</span>
+          <span className="tabular-nums">{animais.length}</span>
         </button>
 
         {['Lactação', 'Seca', 'Gestação', 'Novilha', 'Bezerro'].map(s => {
@@ -529,30 +539,30 @@ export default function TabRebanho() {
           const ativo = filtroStatus === s
           return (
             <button key={s} onClick={() => setStatus(ativo ? 'Todos' : s)}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all shrink-0"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all shrink-0"
               style={{
-                background: ativo ? c.bg : 'transparent',
+                background: ativo ? c.bg : '#f0f4f0',
                 border: `1px solid ${ativo ? c.border : 'transparent'}`,
-                color: ativo ? c.dot : '#64748b',
+                color: ativo ? c.dot : '#4a6741',
               }}>
               <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: c.dot }} />
               {s}
-              <span className="font-mono tabular-nums" style={{ color: ativo ? c.dot : '#475569' }}>{n}</span>
+              <span className="tabular-nums" style={{ color: ativo ? c.dot : '#8aaa85' }}>{n}</span>
             </button>
           )
         })}
 
         {(busca || filtroStatus !== 'Todos' || filtroRaca !== 'Todas') && (
           <button onClick={() => { setBusca(''); setStatus('Todos'); setRaca('Todas') }}
-            className="text-xs font-mono text-slate-600 hover:text-slate-400 whitespace-nowrap ml-auto shrink-0 transition-colors">
+            className="text-xs text-slate-500 hover:text-slate-300 whitespace-nowrap ml-auto shrink-0 transition-colors">
             limpar filtros
           </button>
         )}
       </div>
 
       {/* Contagem */}
-      <div className="px-5 py-2 shrink-0" style={{ borderBottom: `1px solid ${T.border}` }}>
-        <span className="text-[11px] font-mono text-slate-600">
+      <div className="px-5 py-2 shrink-0" style={{ borderBottom: `1px solid ${T.border}`, background: T.s3 }}>
+        <span className="text-[11px] font-medium" style={{ color: '#64748b' }}>
           {filtrados.length === animais.length
             ? `${animais.length} animais`
             : `${filtrados.length} de ${animais.length} animais`}
@@ -562,17 +572,29 @@ export default function TabRebanho() {
       {/* Lista de animais */}
       <div className="overflow-auto flex-1">
         {filtrados.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 gap-2">
-            <Search size={24} className="text-slate-800" />
-            <p className="text-slate-600 text-xs font-mono">nenhum animal encontrado</p>
-          </div>
+          animais.length === 0 ? (
+            <Empty
+              icon={IconRebanho}
+              title="Rebanho vazio"
+              msg="Cadastre o primeiro animal para começar a gestão do rebanho."
+              accentColor="#16a34a"
+              action={<Btn variant="primary" size="sm" onClick={() => setSel(ANIMAL_VAZIO)}><Plus size={12} /> Novo Animal</Btn>}
+            />
+          ) : (
+            <Empty
+              icon={Search}
+              title="Nenhum animal encontrado"
+              msg="Tente ajustar os filtros ou a busca."
+              action={<Btn variant="ghost" size="sm" onClick={() => { setBusca(''); setStatus('Todos'); setRaca('Todas') }}>Limpar filtros</Btn>}
+            />
+          )
         ) : (
-          <table className="w-full text-xs font-mono min-w-[500px]">
+          <table className="w-full text-xs min-w-[500px]">
             <thead>
-              <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+              <tr style={{ background: T.s3, borderBottom: `1px solid ${T.border}` }}>
                 {['Nome', 'Raça', 'Status', 'Nasc.', 'DIL', 'Prod. Hoje', 'Parto Est.', ''].map(h =>
                   <th key={h}
-                    className="text-left text-slate-600 px-4 py-3 font-medium tracking-wider text-[11px] uppercase whitespace-nowrap first:pl-5">
+                    className="text-left text-slate-500 px-4 py-3 font-medium tracking-wider text-[11px] uppercase whitespace-nowrap first:pl-5">
                     {h}
                   </th>
                 )}

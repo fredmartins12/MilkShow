@@ -1679,13 +1679,18 @@ def _ia_groq(system: str, historico: list, fast: bool = False) -> str | None:
 
 
 def _ia_gemini(system: str, historico: list) -> str | None:
-    """Gemini 2.0 Flash — grátis: 15 req/min, 1M tokens/dia."""
+    """Gemini Flash — grátis: 15 req/min, 1M tokens/dia. Tenta múltiplos modelos."""
     key = os.environ.get("GOOGLE_API_KEY", "")
     if not key:
         return None
+    # Modelos em ordem de preferência (confirmados funcionando em jun/2026)
+    MODELOS = [
+        ("v1beta", "gemini-2.5-flash"),
+        ("v1beta", "gemini-2.5-flash-lite-preview-06-17"),
+        ("v1beta", "gemini-2.0-flash-lite"),
+    ]
     try:
         import httpx as _hx
-        # Gemini usa formato diferente — concatena system + histórico como turns
         contents = []
         for msg in historico[-8:]:
             role = "user" if msg["role"] == "user" else "model"
@@ -1695,15 +1700,22 @@ def _ia_gemini(system: str, historico: list) -> str | None:
             "contents": contents,
             "generationConfig": {"maxOutputTokens": 600, "temperature": 0.1},
         }
-        r = _hx.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-2.0-flash:generateContent?key={key}",
-            json=body,
-            timeout=10,
-        )
-        txt = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-        log.info("IA: Gemini OK")
-        return txt
+        for api_ver, modelo in MODELOS:
+            try:
+                r = _hx.post(
+                    f"https://generativelanguage.googleapis.com/{api_ver}/models/"
+                    f"{modelo}:generateContent?key={key}",
+                    json=body,
+                    timeout=15,
+                )
+                if r.status_code == 200:
+                    txt = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    log.info(f"IA: Gemini OK ({modelo})")
+                    return txt
+                log.warning(f"Gemini {modelo}: HTTP {r.status_code}")
+            except Exception as em:
+                log.warning(f"Gemini {modelo} falhou: {em}")
+        return None
     except Exception as e:
         log.warning(f"Gemini falhou: {e}")
         return None
@@ -2045,10 +2057,18 @@ def _chamar_agente(dominio: str, historico: list, animais: str, estoque: str,
         raw = _ia_claude(system, historico)
 
     if not raw:
-        # Mesmo sem resposta da IA, preserva tipo do pré-classificador
-        if tipo_hint:
-            return {"texto": "Entendi! Aguarde um momento.", "estado": "COLETANDO", "tipo": tipo_hint, "dados": {}}
-        return {"texto": "Erro ao processar. Tente novamente.", "estado": "ERRO", "tipo": None, "dados": {}}
+        # IA indisponível — limpa estado e avisa o usuário para tentar de novo
+        log.error("Todos os provedores de IA falharam (Groq+Gemini+Claude)")
+        return {
+            "texto": (
+                "⚠️ Serviço de IA temporariamente indisponível.\n"
+                "Tente enviar a mensagem novamente em alguns instantes.\n"
+                "Comandos rápidos ainda funcionam: *estoque*, *resumo*, *pdf*, *agenda*."
+            ),
+            "estado": "CANCELAR",
+            "tipo": None,
+            "dados": {}
+        }
 
     parsed = _extrair_json(raw)
     if not parsed:
@@ -2090,6 +2110,10 @@ def _chamar_claude(historico: list, animais: str, estoque: str = "",
 def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list] = None) -> str:
     if permissoes is None:
         permissoes = ["admin"]
+    # Normalizar Unicode: WhatsApp envia caracteres compostos (ã, ç, é) em NFD
+    # ex: "peão" NFD (a + combining tilde) → NFC (ã único) para o regex casar
+    import unicodedata as _ud
+    texto = _ud.normalize("NFC", texto)
     conv = _get_conv(tel)
 
     # TTL: abandona conversas COLETANDO/CONFIRMANDO com mais de 30min
@@ -2120,6 +2144,106 @@ def _processar(tel: str, texto: str, fazenda_id: str, permissoes: Optional[list]
                 return ""
         else:
             _PAUSADO.pop(tel, None)
+
+    # ── NPS: captura resposta se producer tem survey pendente ────────────────
+    lower_pre = texto.lower().strip()
+    if tel in _NPS_PENDENTE:
+        if lower_pre.isdigit() and 0 <= int(lower_pre) <= 10:
+            score = int(lower_pre)
+            try:
+                _db().collection("registros_tel").document(tel).update({
+                    "nps_score": score,
+                    "nps_data":  datetime.date.today().isoformat(),
+                })
+            except Exception:
+                pass
+            _NPS_PENDENTE.discard(tel)
+            if score >= 9:
+                return "Que ótimo! 🎉 Obrigado pelo feedback! Conte pra gente o que mais gosta."
+            elif score >= 7:
+                return "Valeu! 🙏 O que poderíamos melhorar para você dar 10?"
+            else:
+                return "Obrigado pela sinceridade! O que mais te incomoda? Queremos melhorar."
+        elif lower_pre in ("agora não", "agora nao", "não", "nao", "depois", "pular"):
+            _NPS_PENDENTE.discard(tel)
+            return "Tudo bem! Boa produção! 🐄"
+        # Não é resposta NPS — deixa cair para o fluxo normal e mantém survey pendente
+
+    # ── Confirmação sanitária: captura sim/não do produtor ───────────────────
+    # ── Handler de substituição de duplicata de produção ────────────────────────
+    if tel in _SUBST_PENDENTE:
+        pend = _SUBST_PENDENTE[tel]
+        if lower_pre in ("substitui", "substituir", "sim", "s", "ok", "confirma", "troca"):
+            _SUBST_PENDENTE.pop(tel, None)
+            try:
+                _coll(pend["fazenda_id"], "producao").document(pend["doc_id"]).update(pend["dados_novos"])
+                return pend.get("msg_ok", "✅ Registro atualizado!")
+            except Exception as e:
+                return f"Erro ao substituir: {str(e)[:60]}"
+        elif lower_pre in ("não", "nao", "n", "cancelar", "cancela", "deixa", "não quero"):
+            _SUBST_PENDENTE.pop(tel, None)
+            return "Ok! Registro anterior mantido. 👍"
+        # Não é resposta — limpa e deixa cair para fluxo normal
+        _SUBST_PENDENTE.pop(tel, None)
+
+    # ── Desambiguação de insumo nutricional ──────────────────────────────────
+    if tel in _INSUMO_DESAMBIG:
+        pend = _INSUMO_DESAMBIG[tel]
+        opcoes = pend["opcoes"]        # lista de nomes de insumos
+        dados_orig = pend["dados"]     # dict com os dados parciais da compra
+        # Usuário deve responder 1, 2, 3... ou o nome do insumo
+        escolha = None
+        if lower_pre.isdigit():
+            idx = int(lower_pre) - 1
+            if 0 <= idx < len(opcoes):
+                escolha = opcoes[idx]
+        else:
+            for op in opcoes:
+                from nutricao import _normalizar as _nn
+                if _nn(lower_pre) in _nn(op) or _nn(op) in _nn(lower_pre):
+                    escolha = op
+                    break
+        if escolha:
+            _INSUMO_DESAMBIG.pop(tel, None)
+            dados_orig["produto"] = escolha
+            try:
+                _coll(fazenda_id, "estoque").add({
+                    **dados_orig,
+                    "criado_em": datetime.datetime.now().isoformat(),
+                    "fonte": "whatsapp",
+                })
+                return (f"✅ *{escolha}* registrado no estoque!\n"
+                        f"Qtd: {dados_orig.get('qtd',0):.0f} {dados_orig.get('un','kg')} · "
+                        f"R$ {dados_orig.get('custo_unit_kg',0):.2f}/kg")
+            except Exception as e:
+                return f"Erro ao salvar: {str(e)[:80]}"
+        elif lower_pre in ("não", "nao", "cancela", "cancelar"):
+            _INSUMO_DESAMBIG.pop(tel, None)
+            return "Ok, compra cancelada. 👍"
+        else:
+            lista_txt = "\n".join(f"{i+1}. {op}" for i, op in enumerate(opcoes))
+            return f"Não entendi. Responda com o número:\n{lista_txt}"
+
+    if tel in _CONFIRMA_SAN:
+        if lower_pre in ("sim", "s", "ok", "feito", "fiz", "executei", "aplicado", "aplicou"):
+            info = _CONFIRMA_SAN.pop(tel)
+            try:
+                docs = list(_coll(info["fazenda_id"], "protocolos_sanitarios")
+                            .where(filter=FieldFilter("nome", "==", info["protocolo"])).stream())
+                if docs:
+                    import datetime as _dt
+                    prox = datetime.date.today() + datetime.timedelta(days=info.get("intervalo_dias", 365))
+                    docs[0].reference.update({
+                        "proxima_data": prox.isoformat(),
+                        "ultima_execucao": datetime.date.today().isoformat(),
+                    })
+            except Exception as e:
+                log.warning(f"Confirma sanitário update erro: {e}")
+            return f"✅ Protocolo *{info['protocolo']}* confirmado! Próxima dose registrada."
+        elif lower_pre in ("não", "nao", "n", "não fiz", "nao fiz"):
+            _CONFIRMA_SAN.pop(tel, None)
+            return "Ok! Lembre de executar o protocolo assim que possível. 💉"
+        # Não é resposta — deixa cair para o fluxo normal
 
     animais = _ctx_animais(fazenda_id)
     estoque = _ctx_estoque(fazenda_id)
@@ -2603,6 +2727,50 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str, registrado_por: str = "Bot 
         forn  = dados.get("fornecedor") or ""
         data_compra = dados.get("data") or hoje
 
+        # ── Desambiguação nutricional: se for insumo de ração, exige match exato ──
+        import unicodedata as _ud2
+        def _sa2(s): return ''.join(c for c in _ud2.normalize('NFD', s) if _ud2.category(c) != 'Mn')
+        _p2 = _sa2(prod.lower())
+        _e_racao = any(k in _p2 for k in ["milho","soja","farelo","silagem","sorgo","polpa",
+                                            "capim","feno","cana","bagaco","melaço","melaco",
+                                            "gluten","caroço","algodao","girassol","trigo",
+                                            "levedura","ureia"])
+        if _e_racao:
+            try:
+                from nutricao import buscar_insumo as _bi
+                matches = _bi(prod)
+                if len(matches) == 0:
+                    # Não encontrou — salva como genérico mas avisa
+                    pass
+                elif len(matches) > 1:
+                    # Ambíguo — pede desambiguação
+                    opcoes = [m["nome"] for m in matches[:5]]
+                    _INSUMO_DESAMBIG[registrado_por] = {
+                        "opcoes": opcoes,
+                        "dados": {
+                            "produto":        prod,
+                            "item":           prod,
+                            "qtd":            qtd,
+                            "qtd_original":   qtd,
+                            "un":             un,
+                            "valor":          val,
+                            "custo_unit_kg":  (val / qtd) if qtd > 0 else 0,
+                            "custo_total":    val,
+                            "fornecedor":     forn,
+                            "data":           str(data_compra),
+                            "cat":            "Ração / Nutrição",
+                        }
+                    }
+                    lista = "\n".join(f"{i+1}. {op}" for i, op in enumerate(opcoes))
+                    return (f"⚠️ *Qual tipo de {prod}?*\n{lista}\n\n"
+                            f"Responda com o número ou o nome completo.")
+                else:
+                    # Match exato — substitui o nome pelo nome oficial da tabela nutricional
+                    prod = matches[0]["nome"]
+                    dados["produto"] = prod
+            except ImportError:
+                pass  # nutricao.py não instalado, continua sem desambiguação
+
         # Categoria: usa o que a IA classificou; fallback por palavra-chave (4 categorias)
         import unicodedata
         def _sem_acento(s):
@@ -2737,9 +2905,15 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str, registrado_por: str = "Bot 
         litros   = _parse_float(dados.get("litros"))
         laticinio = dados.get("laticinio") or "Laticínio"
         data_vl  = dados.get("data") or hoje
-        desc     = f"Venda leite {laticinio} — {litros:.0f} L"
+        # Se litros não foi informado, pede ao usuário antes de salvar
+        if not litros or litros <= 0:
+            return (
+                f"Entendi, você recebeu R$ {val:.2f} do {laticinio}.\n"
+                f"Quantos *litros* foram vendidos?"
+            )
+        desc  = f"Venda leite {laticinio} — {litros:.0f} L"
         _fin("Venda de Leite", desc, val, tipo_fin="receita", data=data_vl)
-        preco = val / litros if litros > 0 else 0
+        preco = val / litros
         return f"*Salvo!*\n{litros:.0f} L vendidos por R$ {val:.2f} (R$ {preco:.2f}/L)"
 
     # ── PRODUCAO_LEITE ────────────────────────
@@ -2793,9 +2967,20 @@ def _salvar(tipo: str, dados: dict, fazenda_id: str, registrado_por: str = "Bot 
                        .limit(1).stream())
             if dup:
                 d_dup = dup[0].to_dict()
+                doc_dup = dup[0]
                 turno_txt_dup = {1: "Manhã", 2: "Tarde", 3: "Noite"}.get(turno, str(turno))
-                return (f"⚠️ Já existe registro de {nome_ani} no {turno_txt_dup} de {data} "
-                        f"({d_dup.get('leite', 0):.0f} L). Quer substituir? Se sim, diga 'substitui'.")
+                turno_txt_novo = {1: "Manhã", 2: "Tarde", 3: "Noite"}.get(turno, str(turno))
+                # Armazena substituição pendente para o próximo handler
+                _SUBST_PENDENTE[registrado_por] = {
+                    "fazenda_id": fazenda_id,
+                    "doc_id": doc_dup.id,
+                    "dados_novos": {"leite": litros},
+                    "msg_ok": f"✅ *Substituído!* {nome_ani} — {turno_txt_novo}: {litros:.0f} L (era {d_dup.get('leite',0):.0f} L)",
+                }
+                return (f"⚠️ Já existe registro de {nome_ani} no {turno_txt_dup} de hoje "
+                        f"({d_dup.get('leite', 0):.0f} L).\n"
+                        f"Quer substituir por {litros:.0f} L?\n"
+                        f"Responda *sim* para substituir ou *não* para manter.")
         except Exception:
             pass
 
@@ -3469,7 +3654,8 @@ def _enviar_pdf_whatsapp(para: str, pdf_bytes: bytes, filename: str, caption: st
         candidatos.append(num[:4] + num[5:])
 
     b64 = _b64.b64encode(pdf_bytes).decode()
-    media_data = f"data:application/pdf;base64,{b64}"
+    # Evolution API v2 aceita base64 puro (sem prefixo data:...)
+    # ou URL pública. Enviamos base64 direto.
 
     try:
         import httpx as _hx
@@ -3483,11 +3669,11 @@ def _enviar_pdf_whatsapp(para: str, pdf_bytes: bytes, filename: str, caption: st
                     "mediatype": "document",
                     "mimetype":  "application/pdf",
                     "caption":   caption or filename,
-                    "media":     media_data,
+                    "media":     b64,          # base64 puro, sem prefixo data:
                     "fileName":  filename,
                     "delay":     300,
                 },
-                timeout=30,
+                timeout=60,
             )
             if r.status_code in (200, 201):
                 log.info(f"PDF → {para}: OK ({len(pdf_bytes)//1024}KB via {candidato})")
@@ -3825,16 +4011,90 @@ def _enviar_botoes(para: str, texto: str, opcoes: list[tuple[str, str]]):
 
 
 def _todos_telefones() -> list:
-    """Retorna lista de {tel, fazenda_id} de todos os números ativos."""
+    """Retorna lista de {tel, fazenda_id, permissoes} de todos os números ativos."""
     try:
         docs = _db().collection("registros_tel").stream()
-        return [
-            {"tel": d.id, "fazenda_id": d.to_dict().get("fazenda_id", "default")}
-            for d in docs
-            if d.to_dict().get("ativo", True)
-        ]
+        result = []
+        for d in docs:
+            dd = d.to_dict()
+            if not dd.get("ativo", True):
+                continue
+            result.append({
+                "tel":        d.id,
+                "fazenda_id": dd.get("fazenda_id", "default"),
+                "permissoes": dd.get("permissoes", ["admin"]),
+                "nome":       dd.get("nome", ""),
+            })
+        return result
     except Exception:
         return []
+
+
+def _pd(s):
+    """Parse date string → date object (usado nos lembretes reprodutivos)."""
+    try:
+        return datetime.datetime.strptime(str(s)[:10], "%Y-%m-%d").date() if s else None
+    except Exception:
+        return None
+
+
+def _lembretes_reprodutivos(fazenda_id: str, dias_antecedencia: int = 3) -> list:
+    """Retorna mensagens de alertas reprodutivos para eventos nos próximos N dias."""
+    alvo = datetime.date.today() + datetime.timedelta(days=dias_antecedencia)
+    GESTACAO  = 283
+    DIAS_SECAR = 60
+    DIAS_DIAGN = 30
+    DIAS_PVE   = 45
+
+    lembretes = []
+    try:
+        animais = [d.to_dict() for d in _coll(fazenda_id, "animais").stream()]
+    except Exception:
+        return []
+
+    for a in animais:
+        nome   = a.get("nome", "?")
+        status = a.get("status", "")
+        d_ins  = _pd(a.get("ins") or a.get("inseminacao") or a.get("dt_insem"))
+        d_parto = _pd(a.get("dt_parto"))
+
+        # 1. Diagnóstico de prenhez (30 dias pós inseminação)
+        if d_ins and not a.get("prenhez") and status in ("Lactação", "Lactacao"):
+            if d_ins + datetime.timedelta(days=DIAS_DIAGN) == alvo:
+                lembretes.append(
+                    f"🔬 *{nome}* — Diagnóstico de prenhez em {dias_antecedencia} dias "
+                    f"({alvo.strftime('%d/%m')})\n"
+                    f"   _{DIAS_DIAGN} dias desde a inseminação_"
+                )
+
+        # 2. Momento ideal de inseminação (45 dias pós parto, sem inseminação)
+        if not d_ins and d_parto and status in ("Lactação", "Lactacao"):
+            if d_parto + datetime.timedelta(days=DIAS_PVE) == alvo:
+                lembretes.append(
+                    f"💉 *{nome}* — Pronta para inseminar em {dias_antecedencia} dias "
+                    f"({alvo.strftime('%d/%m')})\n"
+                    f"   _{DIAS_PVE} dias de pós-parto — janela ideal de reprodução_"
+                )
+
+        if a.get("prenhez") and d_ins:
+            parto_prev = d_ins + datetime.timedelta(days=GESTACAO)
+            d_secar    = parto_prev - datetime.timedelta(days=DIAS_SECAR)
+
+            # 3. Secagem preventiva
+            if d_secar == alvo:
+                lembretes.append(
+                    f"🛑 *{nome}* — Secar em {dias_antecedencia} dias ({alvo.strftime('%d/%m')})\n"
+                    f"   _Parto previsto: {parto_prev.strftime('%d/%m/%Y')}_"
+                )
+
+            # 4. Parto iminente
+            if parto_prev == alvo:
+                lembretes.append(
+                    f"🐄 *{nome}* — *PARTO EM {dias_antecedencia} DIAS!* ({alvo.strftime('%d/%m')})\n"
+                    f"   _Prepare o piquete de maternidade e avise o veterinário!_"
+                )
+
+    return lembretes
 
 
 # ─────────────────────────────────────────────
@@ -4109,9 +4369,12 @@ def _processar_onboarding(tel: str, texto: str):
         _ONBOARDING[tel] = {"step": "aguarda_nome_pessoa"}
         _enviar_whatsapp(tel,
             "👋 Olá! Bem-vindo ao *MilkShow*!\n\n"
-            "Seu número não está cadastrado ainda.\n\n"
-            "Se você recebeu um *código de convite*, envie-o agora.\n"
-            "Ou vamos criar uma nova fazenda!\n\n"
+            "Seu número ainda não está autorizado.\n\n"
+            "Você tem 3 opções:\n"
+            "1️⃣ *Código de convite* — peça ao administrador e envie o código MKSH-XXXXXX\n"
+            "2️⃣ *Cadastro pelo app* — peça ao admin para adicionar seu número em "
+            "*Configurações → Usuários WhatsApp* em https://milshow.com.br/app\n"
+            "3️⃣ *Criar nova fazenda* — responda com seu nome para começar\n\n"
             "Qual é o seu *nome*?"
         )
         return
@@ -4680,7 +4943,12 @@ import hashlib as _hashlib
 # Dedup: guarda {(fazenda_id, alerta_hash, data_iso)} para não reenviar o mesmo
 # alerta para a mesma fazenda no mesmo dia.
 _alertas_enviados: set = set()
-_agendador_task = None   # garante apenas uma task rodando
+_agendador_task   = None   # garante apenas uma task rodando
+_monitor_task     = None   # monitor de conexão Evolution
+_NPS_PENDENTE:     set  = set()   # tel → aguardando resposta NPS
+_CONFIRMA_SAN:     dict = {}      # tel → {fazenda_id, protocolo} aguardando sim/não
+_SUBST_PENDENTE:   dict = {}      # tel → {fazenda_id, doc_id, dados_novos, msg_ok} substituição duplicata
+_INSUMO_DESAMBIG:  dict = {}      # tel → {opcoes, dados} aguardando escolha do insumo
 
 
 def _alerta_ja_enviado(fazenda_id: str, alerta: str) -> bool:
@@ -4757,12 +5025,107 @@ async def _loop_agendador():
                         rel = _gerar_relatorio_semanal(fazenda_id)
                         _enviar_whatsapp(tel, rel)
 
-                    # Ranking de rentabilidade — dia 1 de cada mês às 6h
-                    if hoje.day == 1 and eh_6h:
-                        ranking_msg = await _asyncio.to_thread(
-                            _gerar_ranking_rentabilidade, fazenda_id, 30
-                        )
-                        _enviar_whatsapp(tel, ranking_msg)
+                    # ── Dia 1 do mês às 6h: relatório completo em PDF ────────
+                    if hoje.day == 1 and eh_6h and "admin" in reg.get("permissoes", ["admin"]):
+                        # Mês anterior
+                        primeiro = hoje.replace(day=1)
+                        mes_ant  = (primeiro - datetime.timedelta(days=1))
+                        mes_str  = mes_ant.strftime("%Y-%m")
+                        meses_pt = ["","Janeiro","Fevereiro","Março","Abril","Maio","Junho",
+                                    "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
+                        mes_label = f"{meses_pt[mes_ant.month]} {mes_ant.year}"
+                        try:
+                            pdf_bytes = await _asyncio.to_thread(
+                                _gerar_pdf_relatorio, fazenda_id, mes_str
+                            )
+                            _enviar_whatsapp(tel,
+                                f"📊 *Relatório Mensal — {mes_label}*\n\n"
+                                f"Seu relatório completo de {mes_label} está pronto!\n"
+                                f"Inclui: produção, receitas, despesas, top vacas e margem.\n\n"
+                                f"Arquivo PDF gerado agora ↓"
+                            )
+                            _enviar_pdf_whatsapp(
+                                tel, pdf_bytes,
+                                f"MilkShow_{mes_str}.pdf",
+                                caption=f"📊 Relatório {mes_label} — MilkShow"
+                            )
+                            # Ranking de rentabilidade junto
+                            ranking_msg = await _asyncio.to_thread(
+                                _gerar_ranking_rentabilidade, fazenda_id, 30
+                            )
+                            _enviar_whatsapp(tel, ranking_msg)
+                        except Exception as e:
+                            log.error(f"Relatório mensal PDF erro {fazenda_id}: {e}")
+
+                    # ── Lembretes reprodutivos — 3 dias de antecedência ───────
+                    if eh_6h:
+                        try:
+                            lembr = await _asyncio.to_thread(
+                                _lembretes_reprodutivos, fazenda_id, 3
+                            )
+                            novos_lembr = [l for l in lembr if not _alerta_ja_enviado(fazenda_id, l)]
+                            if novos_lembr:
+                                msg_rep = (
+                                    "🐄 *Agenda Reprodutiva — Próximos 3 dias:*\n\n"
+                                    + "\n\n".join(novos_lembr)
+                                )
+                                _enviar_whatsapp(tel, msg_rep)
+                        except Exception as e:
+                            log.warning(f"Lembretes reprodutivos erro {fazenda_id}: {e}")
+
+                    # Alertas sanitários proativos — protocolos com data == hoje
+                    if eh_6h:
+                        try:
+                            protos_hoje = list(_coll(fazenda_id, "protocolos_sanitarios")
+                                               .where(filter=FieldFilter("ativo", "==", True)).stream())
+                            for p in protos_hoje:
+                                pd_ = p.to_dict()
+                                try:
+                                    prox_d = datetime.datetime.strptime(
+                                        str(pd_.get("proxima_data", ""))[:10], "%Y-%m-%d"
+                                    ).date()
+                                except Exception:
+                                    continue
+                                if prox_d == hoje:
+                                    nome_proto = pd_.get("nome", "?")
+                                    chave_san  = f"sanitario:{nome_proto}:{hoje.isoformat()}"
+                                    if not _alerta_ja_enviado(fazenda_id, chave_san):
+                                        _CONFIRMA_SAN[tel] = {
+                                            "fazenda_id":    fazenda_id,
+                                            "protocolo":     nome_proto,
+                                            "intervalo_dias": int(pd_.get("intervalo_dias", 365)),
+                                        }
+                                        _enviar_whatsapp(tel,
+                                            f"💉 *Protocolo de hoje:* {nome_proto}\n"
+                                            f"Animais: {pd_.get('animais', 'rebanho')}\n\n"
+                                            "Você executou? Responda *sim* ou *não*."
+                                        )
+                                        break  # um por vez para não sobrecarregar
+                        except Exception as e:
+                            log.warning(f"Alertas sanitários erro: {e}")
+
+                    # NPS — pergunta após 30 dias de uso (só uma vez)
+                    if eh_6h:
+                        try:
+                            doc_tel = _db().collection("registros_tel").document(tel).get()
+                            if doc_tel.exists:
+                                dados_tel = doc_tel.to_dict()
+                                if not dados_tel.get("nps_score") and tel not in _NPS_PENDENTE:
+                                    created_raw = dados_tel.get("created_at", "")
+                                    if created_raw:
+                                        created_dt = datetime.datetime.fromisoformat(str(created_raw)[:19])
+                                        dias_uso = (datetime.datetime.now() - created_dt).days
+                                        if dias_uso >= 30:
+                                            _NPS_PENDENTE.add(tel)
+                                            _enviar_whatsapp(tel,
+                                                "🌟 *Uma pergunta rápida!*\n\n"
+                                                "Você usa o MilkShow há 30 dias. "
+                                                "De *0 a 10*, qual a chance de você "
+                                                "indicar o MilkShow a outro produtor?\n\n"
+                                                "_(Responda só com o número)_"
+                                            )
+                        except Exception as e:
+                            log.warning(f"NPS check erro: {e}")
 
                 except Exception as e:
                     log.error(f"Agendador erro para {tel}: {e}")
@@ -4772,11 +5135,64 @@ async def _loop_agendador():
             await _asyncio.sleep(3600)
 
 
+async def _loop_monitor_evolution():
+    """Verifica conexão Evolution a cada 15 min. Alerta admin se desconectado."""
+    _ultimo_alerta: Optional[datetime.datetime] = None
+    _desconectado_desde: Optional[datetime.datetime] = None
+
+    while True:
+        await _asyncio.sleep(15 * 60)  # 15 minutos
+        try:
+            url      = os.environ.get("EVOLUTION_URL", "").rstrip("/")
+            api_key  = os.environ.get("EVOLUTION_KEY", "")
+            instance = os.environ.get("EVOLUTION_INSTANCE", "milkshow")
+            admin_tel = os.environ.get("ADMIN_TEL", "")
+            if not url or not api_key:
+                continue
+
+            import httpx as _hx
+            r = _hx.get(
+                f"{url}/instance/connectionState/{instance}",
+                headers={"apikey": api_key},
+                timeout=10,
+            )
+            data = r.json() if r.status_code == 200 else {}
+            state = (data.get("instance", {}).get("state") or
+                     data.get("state") or "")
+
+            if state == "open":
+                if _desconectado_desde:
+                    log.info("Evolution: conexão restaurada.")
+                    if admin_tel:
+                        _enviar_whatsapp(admin_tel, "✅ WhatsApp reconectado! MilkShow operando normalmente.")
+                _desconectado_desde = None
+                _ultimo_alerta = None
+            else:
+                agora = datetime.datetime.now()
+                if _desconectado_desde is None:
+                    _desconectado_desde = agora
+                minutos = int((agora - _desconectado_desde).total_seconds() / 60)
+                # Alerta a cada 30min sem conexão
+                if admin_tel and (_ultimo_alerta is None or
+                                  (agora - _ultimo_alerta).total_seconds() >= 1800):
+                    _ultimo_alerta = agora
+                    log.warning(f"Evolution desconectado há {minutos} min (state={state!r})")
+                    _enviar_whatsapp(admin_tel,
+                        f"⚠️ *WhatsApp desconectado* há {minutos} min!\n"
+                        f"Estado: {state or 'desconhecido'}\n"
+                        "Acesse o painel Evolution e reconecte o QR Code."
+                    )
+        except Exception as e:
+            log.warning(f"Monitor Evolution erro: {e}")
+
+
 @app.on_event("startup")
 async def _iniciar_agendador():
-    global _agendador_task
+    global _agendador_task, _monitor_task
     if _agendador_task is None or _agendador_task.done():
         _agendador_task = _asyncio.create_task(_loop_agendador())
+    if _monitor_task is None or _monitor_task.done():
+        _monitor_task = _asyncio.create_task(_loop_monitor_evolution())
 
 
 # ─────────────────────────────────────────────

@@ -6,7 +6,7 @@
 # =============================================================
 set -e
 
-DOMINIO="${1:-$(curl -s ifconfig.me)}"
+DOMINIO="${1:-milshow.com.br}"
 APP_DIR="/opt/milkshow"
 LOG_DIR="/var/log/milkshow"
 

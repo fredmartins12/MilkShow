@@ -8,7 +8,7 @@ import { Plus, Package, AlertTriangle, RefreshCw, Pencil, Trash2, X } from 'luci
 import { api } from '../api.js'
 import {
   Loading, ErrorMsg, Toast, Modal, SectionHeader,
-  Field, Input, Select, Btn, T, hoje,
+  Field, Input, Select, Btn, Empty, T, hoje,
 } from '../ui.jsx'
 
 const UNIDADES   = ['kg', 'L', 'un', 'sc', 'cx', 'g', 'mL', 'dose']
@@ -35,7 +35,7 @@ function ItemCard({ item, onEdit, onDelete }) {
           </div>
           <div className="min-w-0">
             <p className="text-sm font-semibold text-slate-200 truncate">{item.item}</p>
-            <p className="text-[11px] font-mono text-slate-600">{item.categoria || '—'}</p>
+            <p className="text-[11px] text-slate-500">{item.categoria || '—'}</p>
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
@@ -55,7 +55,7 @@ function ItemCard({ item, onEdit, onDelete }) {
       {/* Quantidade */}
       <div className="flex items-end justify-between">
         <div>
-          <p className="text-[11px] font-mono text-slate-600 mb-0.5">Quantidade</p>
+          <p className="text-[11px] text-slate-500 mb-0.5">Quantidade</p>
           <p className="text-2xl font-mono font-bold tabular-nums"
              style={{ color: zero ? '#ef4444' : baixo ? '#f59e0b' : '#f1f5f9' }}>
             {Number(item.qtd).toLocaleString('pt-BR')}
@@ -64,7 +64,7 @@ function ItemCard({ item, onEdit, onDelete }) {
         </div>
         {item.custo_unit > 0 && (
           <div className="text-right">
-            <p className="text-[11px] font-mono text-slate-600 mb-0.5">Custo unit.</p>
+            <p className="text-[11px] text-slate-500 mb-0.5">Custo unit.</p>
             <p className="text-sm font-mono text-slate-400">
               R$ {Number(item.custo_unit).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             </p>
@@ -77,14 +77,14 @@ function ItemCard({ item, onEdit, onDelete }) {
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg"
              style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
           <AlertTriangle size={12} className="text-red-400 shrink-0" />
-          <span className="text-red-400 text-[11px] font-mono">Estoque zerado</span>
+          <span className="text-red-400 text-[11px]">Estoque zerado</span>
         </div>
       )}
       {!zero && baixo && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg"
              style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)' }}>
           <AlertTriangle size={12} className="text-amber-500 shrink-0" />
-          <span className="text-amber-500 text-[11px] font-mono">
+          <span className="text-amber-500 text-[11px]">
             Estoque baixo · mínimo {item.min_alerta} {item.un}
           </span>
         </div>
@@ -160,6 +160,12 @@ export default function TabArmazem() {
 
   useEffect(() => { carregar() }, [])
 
+  useEffect(() => {
+    const onRefresh = () => carregar()
+    window.addEventListener('milkshow:refresh', onRefresh)
+    return () => window.removeEventListener('milkshow:refresh', onRefresh)
+  }, [])
+
   function abrirNovo() {
     setEditando(null)
     setForm(FORM_VAZIO)
@@ -229,14 +235,14 @@ export default function TabArmazem() {
       {/* Resumo */}
       <div className="grid grid-cols-3 shrink-0" style={{ borderBottom: `1px solid ${T.border}` }}>
         {[
-          { label: 'Itens em estoque', value: itens.length, cor: 'text-slate-100' },
-          { label: 'Alertas',          value: alertas.length, cor: alertas.length > 0 ? 'text-amber-400' : 'text-slate-100' },
-          { label: 'Categorias',       value: categorias.length - 1, cor: 'text-slate-100' },
+          { label: 'ITENS EM ESTOQUE', value: itens.length,            accent: '#22c55e' },
+          { label: 'ALERTAS',          value: alertas.length,           accent: alertas.length > 0 ? '#f59e0b' : '#64748b' },
+          { label: 'CATEGORIAS',       value: categorias.length - 1,    accent: '#a78bfa' },
         ].map((k, i, arr) => (
-          <div key={k.label} className="p-5"
-               style={{ borderRight: i < arr.length - 1 ? `1px solid ${T.border}` : 'none' }}>
-            <p className="text-[11px] font-mono uppercase tracking-widest text-slate-500 mb-2">{k.label}</p>
-            <p className={`text-2xl font-mono font-bold tabular-nums ${k.cor}`}>{k.value}</p>
+          <div key={k.label} className="p-5 pt-3 flex flex-col gap-1"
+               style={{ borderRight: i < arr.length - 1 ? `1px solid ${T.border}` : 'none', borderTop: `2px solid ${k.accent}` }}>
+            <p className="text-[11px] font-medium uppercase tracking-widest text-slate-500">{k.label}</p>
+            <p className="text-2xl font-mono font-bold tabular-nums" style={{ color: k.accent === '#64748b' ? '#f1f5f9' : k.accent }}>{k.value}</p>
           </div>
         ))}
       </div>
@@ -273,14 +279,16 @@ export default function TabArmazem() {
       {/* Grid de itens */}
       <div className="overflow-auto flex-1 p-5">
         {filtrados.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 gap-3">
-            <div className="w-12 h-12 rounded-full flex items-center justify-center"
-                 style={{ background: T.surface, border: `1px solid ${T.border}` }}>
-              <Package size={18} className="text-slate-700" />
-            </div>
-            <p className="text-slate-600 text-xs font-mono">nenhum item cadastrado</p>
-            <Btn variant="outline" size="sm" onClick={abrirNovo}><Plus size={12} />Adicionar primeiro item</Btn>
-          </div>
+          <Empty
+            icon={Package}
+            title={itens.length === 0 ? 'Armazém vazio' : 'Nenhum item encontrado'}
+            msg={itens.length === 0 ? 'Cadastre ração, medicamentos e insumos para controlar o estoque.' : 'Tente ajustar o filtro de categoria.'}
+            accentColor="#22c55e"
+            action={itens.length === 0
+              ? <Btn variant="primary" size="sm" onClick={abrirNovo}><Plus size={12} /> Adicionar item</Btn>
+              : <Btn variant="ghost" size="sm" onClick={() => setFiltro('Todos')}>Ver todos</Btn>
+            }
+          />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {filtrados.map(item => (

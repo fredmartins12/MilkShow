@@ -3,11 +3,11 @@ import {
   ComposedChart, Area, Line, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
-import { Plus, RefreshCw, Trash2, Pencil, Download } from 'lucide-react'
+import { Plus, RefreshCw, Trash2, Pencil, Download, Wallet } from 'lucide-react'
 import { api } from '../api.js'
 import {
   Loading, ErrorMsg, Toast, Modal, SectionHeader,
-  Field, Input, Select, Textarea, Btn, T, hoje, fmtBRL, ChartControls, csvDownload,
+  Field, Input, Select, Textarea, Btn, Empty, T, hoje, fmtBRL, ChartControls, csvDownload,
 } from '../ui.jsx'
 
 const CATEGORIAS_REC = ['Venda de Leite', 'Venda de Animal', 'Outros']
@@ -20,13 +20,13 @@ function ChartTip({ active, payload, label }) {
   if (!active || !payload?.length) return null
   return (
     <div style={{ background: T.surface, border: `1px solid ${T.border}` }}
-         className="rounded px-3 py-2 text-[11px]">
-      <p className="text-slate-500 font-mono mb-1">{label}</p>
+         className="rounded-xl px-3 py-2.5 text-[11px] shadow-lg">
+      <p className="text-slate-500 mb-1">{label}</p>
       {payload.map(p => (
         <div key={p.dataKey} className="flex items-center gap-2">
-          <span className="w-2.5 h-px inline-block" style={{ background: p.color }} />
-          <span className="text-slate-400 font-mono">{p.name}:</span>
-          <span className="text-slate-100 font-mono font-semibold tabular-nums">{fmtBRL(p.value)}</span>
+          <span className="w-2 h-2 rounded-full inline-block shrink-0" style={{ background: p.color }} />
+          <span className="text-slate-400">{p.name}:</span>
+          <span className="text-slate-100 font-semibold font-mono tabular-nums">{fmtBRL(p.value)}</span>
         </div>
       ))}
     </div>
@@ -35,7 +35,7 @@ function ChartTip({ active, payload, label }) {
 
 // ─── GRÁFICO DUPLO (receita + despesa) ───────────────────────────────────────
 function FinChart({ data, tipo }) {
-  const tick = { fill: '#475569', fontSize: 10, fontFamily: 'monospace' }
+  const tick = { fill: '#475569', fontSize: 10, fontFamily: 'var(--font-sans)' }
   const grid = <CartesianGrid strokeDasharray="2 4" stroke={T.border} />
   const x    = <XAxis dataKey="dia" tick={tick} />
   const y    = <YAxis tick={tick} />
@@ -124,6 +124,12 @@ export default function TabFinanceiro() {
 
   useEffect(() => { carregar(periodo) }, [periodo])
 
+  useEffect(() => {
+    const onRefresh = () => carregar(periodo)
+    window.addEventListener('milkshow:refresh', onRefresh)
+    return () => window.removeEventListener('milkshow:refresh', onRefresh)
+  }, [periodo])
+
   function abrirNovo() {
     setEditando(null)
     setForm(FORM_VAZIO)
@@ -185,22 +191,22 @@ export default function TabFinanceiro() {
       {/* Sumário */}
       <div className="grid grid-cols-4 shrink-0" style={{ borderBottom: `1px solid ${T.border}` }}>
         {[
-          { label: `RECEITAS ${periodo}D`, value: fmtBRL(totalRec), color: 'text-emerald-400' },
-          { label: `DESPESAS ${periodo}D`, value: fmtBRL(totalDes), color: 'text-red-400' },
-          { label: 'SALDO',               value: fmtBRL(saldo),    color: saldo >= 0 ? 'text-emerald-400' : 'text-red-400' },
-          { label: 'MARGEM',              value: `${margem.toFixed(1)}%`, color: 'text-slate-100' },
+          { label: `RECEITAS ${periodo}D`, value: fmtBRL(totalRec), accent: '#10b981' },
+          { label: `DESPESAS ${periodo}D`, value: fmtBRL(totalDes), accent: '#ef4444' },
+          { label: 'SALDO',               value: fmtBRL(saldo),    accent: saldo >= 0 ? '#10b981' : '#ef4444' },
+          { label: 'MARGEM',              value: `${margem.toFixed(1)}%`, accent: margem >= 0 ? '#22c55e' : '#ef4444' },
         ].map((k, i, arr) => (
-          <div key={k.label} className="p-4"
-               style={{ borderRight: i < arr.length - 1 ? `1px solid ${T.border}` : '' }}>
-            <p className="text-[10px] font-mono uppercase tracking-widest text-slate-600 mb-2">{k.label}</p>
-            <p className={`text-xl font-mono font-semibold tabular-nums ${k.color}`}>{k.value}</p>
+          <div key={k.label} className="p-4 pt-3 flex flex-col gap-1"
+               style={{ borderRight: i < arr.length - 1 ? `1px solid ${T.border}` : '', borderTop: `2px solid ${k.accent}` }}>
+            <p className="text-[11px] font-medium uppercase tracking-widest text-slate-500">{k.label}</p>
+            <p className="text-xl font-mono font-semibold tabular-nums" style={{ color: k.accent }}>{k.value}</p>
           </div>
         ))}
       </div>
 
       {/* Gráfico */}
-      <div className="px-5 pt-4 pb-3 shrink-0 space-y-3" style={{ borderBottom: `1px solid ${T.border}` }}>
-        <p className="text-[10px] font-mono uppercase tracking-widest text-slate-600">
+      <div className="px-5 pt-4 pb-4 shrink-0 space-y-3" style={{ borderBottom: `1px solid ${T.border}`, background: T.s2 }}>
+        <p className="text-[11px] font-medium uppercase tracking-widest text-slate-500">
           Receita vs. Despesa — {periodo} dias
         </p>
         <ChartControls
@@ -232,11 +238,20 @@ export default function TabFinanceiro() {
       />
 
       <div className="overflow-auto flex-1">
-        <table className="w-full text-xs font-mono">
+        {registros.length === 0 ? (
+          <Empty
+            icon={Wallet}
+            title="Nenhum lançamento"
+            msg={`Sem registros nos últimos ${periodo} dias.`}
+            accentColor="#10b981"
+            action={<Btn variant="primary" size="sm" onClick={abrirNovo}><Plus size={12} /> Novo lançamento</Btn>}
+          />
+        ) : (
+        <table className="w-full text-xs">
           <thead>
-            <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+            <tr style={{ background: T.s3, borderBottom: `1px solid ${T.border}` }}>
               {['DATA', 'TIPO', 'CATEGORIA', 'DESCRIÇÃO', 'VALOR', ''].map(h =>
-                <th key={h} className="text-left text-slate-700 px-4 py-2 font-normal tracking-wider text-[10px]">{h}</th>
+                <th key={h} className="text-left text-slate-500 px-4 py-2.5 font-medium text-[11px] tracking-wider uppercase">{h}</th>
               )}
             </tr>
           </thead>
@@ -273,6 +288,7 @@ export default function TabFinanceiro() {
             ))}
           </tbody>
         </table>
+        )}
       </div>
 
       {/* Confirm delete */}
@@ -291,7 +307,8 @@ export default function TabFinanceiro() {
 
       {/* Modal novo/editar */}
       <Modal open={modal} onClose={() => setModal(false)}
-        title={editando ? 'Editar Lançamento' : 'REGISTRAR LANÇAMENTO'}>
+        title={editando ? 'Editar Lançamento' : (form.tipo === 'receita' ? 'Nova Receita' : 'Nova Despesa')}
+        accentColor={form.tipo === 'receita' ? '#10b981' : '#ef4444'}>
         <form onSubmit={salvar} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <Field label="Tipo">

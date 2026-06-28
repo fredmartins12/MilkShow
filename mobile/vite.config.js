@@ -10,6 +10,9 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       workbox: {
+        // Ativa novo SW imediatamente — sem esperar fechar todas as abas
+        skipWaiting: true,
+        clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         runtimeCaching: [
           {
@@ -26,22 +29,38 @@ export default defineConfig({
         ],
       },
       manifest: {
+        id: '/app/',
         name: 'MilkShow Enterprise',
         short_name: 'MilkShow',
-        description: 'Gestão inteligente de fazendas leiteiras',
-        theme_color: '#020617',
-        background_color: '#020617',
+        description: 'Gestão inteligente de fazendas leiteiras — controle de produção, rebanho, finanças e bot WhatsApp',
+        theme_color: '#22c55e',
+        background_color: '#f1f4f1',
         display: 'standalone',
         orientation: 'portrait',
         scope: '/app/',
         start_url: '/app/',
+        categories: ['productivity', 'business', 'utilities'],
         icons: [
-          { src: '/app/icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: '/app/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
           { src: '/app/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+          { src: '/app/icon.svg',     sizes: 'any',     type: 'image/svg+xml', purpose: 'any' },
+        ],
+        screenshots: [
+          { src: '/app/screenshot-desktop.png', sizes: '1536x864', type: 'image/png', form_factor: 'wide', label: 'Dashboard MilkShow' },
+          { src: '/app/screenshot-mobile.png',  sizes: '390x844',  type: 'image/png', form_factor: 'narrow', label: 'MilkShow no celular' },
         ],
       },
     }),
   ],
+  server: {
+    proxy: {
+      '/api': {
+        target: 'https://milshow.com.br',
+        changeOrigin: true,
+        secure: true,
+      }
+    }
+  },
   base: '/app/',
   build: {
     outDir: 'dist',

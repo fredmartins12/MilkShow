@@ -1,16 +1,18 @@
 /**
- * MilkShow — Enterprise Shell
- * Layout: sidebar (md+) + bottom nav (mobile)
- * Touch targets: mín 44px · Primary brand: verde #16a34a
+ * MilkShow Enterprise — Shell v3
+ * Estilo inspirado no Leigado: top bar verde + sidebar branca + conteúdo cinza claro
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   LayoutDashboard, Stethoscope, ShieldCheck, Milk, Activity,
-  Settings, ChevronLeft, ChevronRight, LogOut, Bell,
-  CalendarDays, Baby, Wallet, Terminal, CircleDot, MoreHorizontal,
-  X, Beef, Package, Plus, RefreshCw,
+  Settings, LogOut, Bell, CalendarDays, Wallet,
+  MessageCircle, X, Package, Plus, ChevronLeft, ChevronRight,
+  Check, ArrowUp, Cpu, Menu, Building2, ChevronDown, MoreVertical,
+  Zap, PawPrint, FlaskConical, Trophy,
 } from 'lucide-react'
+import { IconBezerro } from '../components/IconBezerro.jsx'
+import { IconRebanho } from '../components/IconRebanho.jsx'
 
 import TabBI         from '../tabs/TabBI.jsx'
 import TabProducao   from '../tabs/TabProducao.jsx'
@@ -22,22 +24,43 @@ import TabConfig     from '../tabs/TabConfig.jsx'
 import TabRebanho    from '../tabs/TabRebanho.jsx'
 import TabArmazem    from '../tabs/TabArmazem.jsx'
 import TabCalendario from '../tabs/TabCalendario.jsx'
+import TabNutricao   from '../tabs/TabNutricao.jsx'
+import TabRanking    from '../tabs/TabRanking.jsx'
 
 import { api } from '../api.js'
-import { Modal, Field, Input, Select, Btn, T, hoje } from '../ui.jsx'
+import { Modal, Field, Input, Select, Btn, hoje } from '../ui.jsx'
 
-// ─── MÓDULOS ─────────────────────────────────────────────────────────────────
+// ─── CORES ────────────────────────────────────────────────────────────────────
+const C = {
+  brand:    '#22c55e',
+  brand2:   '#16a34a',
+  brandBg:  '#f0fdf4',
+  brandLight: 'rgba(34,197,94,0.12)',
+  sidebar:  '#ffffff',
+  topbar:   '#22c55e',
+  bg:       '#f1f4f1',
+  border:   '#e8ede8',
+  text:     '#1a2e1a',
+  sub:      '#4a6741',
+  muted:    '#8aaa85',
+  surface:  '#ffffff',
+  dark:     '#0f1f0f',
+}
+
+// ─── MÓDULOS ──────────────────────────────────────────────────────────────────
 const ALL_MODULES = [
-  { id: 'bi',         Icon: LayoutDashboard, label: 'Dashboard',    perm: null },
-  { id: 'producao',   Icon: Activity,        label: 'Produção',     perm: null },
-  { id: 'rebanho',    Icon: Beef,            label: 'Rebanho',      perm: null },
-  { id: 'financeiro', Icon: Wallet,          label: 'Financeiro',   perm: 'financeiro' },
-  { id: 'calendario', Icon: CalendarDays,    label: 'Calendário',   perm: null },
-  { id: 'armazem',    Icon: Package,         label: 'Armazém',      perm: null },
-  { id: 'vet',        Icon: Stethoscope,     label: 'Veterinária',  perm: null },
-  { id: 'sanidade',   Icon: ShieldCheck,     label: 'Sanidade',     perm: null },
-  { id: 'bercario',   Icon: Baby,            label: 'Berçário',     perm: null },
-  { id: 'config',     Icon: Settings,        label: 'Configurações',perm: 'admin' },
+  { id: 'bi',         Icon: LayoutDashboard, label: 'Dashboard'    },
+  { id: 'producao',   Icon: Activity,        label: 'Produção'     },
+  { id: 'rebanho',    Icon: IconRebanho,     label: 'Rebanho'      },
+  { id: 'financeiro', Icon: Wallet,          label: 'Financeiro',  perm: 'financeiro' },
+  { id: 'calendario', Icon: CalendarDays,    label: 'Calendário'   },
+  { id: 'armazem',    Icon: Package,         label: 'Armazém'      },
+  { id: 'vet',        Icon: Stethoscope,     label: 'Veterinária'  },
+  { id: 'sanidade',   Icon: ShieldCheck,     label: 'Sanidade'     },
+  { id: 'bercario',   Icon: IconBezerro,     label: 'Bezerros'     },
+  { id: 'nutricao',   Icon: FlaskConical,    label: 'Nutrição'     },
+  { id: 'ranking',    Icon: Trophy,          label: 'Rankings'     },
+  { id: 'config',     Icon: Settings,        label: 'Configurações', perm: 'admin' },
 ]
 
 function getPermissoes() {
@@ -54,102 +77,226 @@ function filtrarModulos(permissoes) {
   return ALL_MODULES.filter(m => !m.perm || isAdmin || permissoes.includes(m.perm))
 }
 
-// ─── LOG TERMINAL ─────────────────────────────────────────────────────────────
-const LOG_IA = [
-  { ts: '14:21:00', tipo: 'SISTEMA',  msg: 'MilkShow AI v2.1 — Sessão iniciada' },
-  { ts: '14:21:03', tipo: 'SISTEMA',  msg: 'Firebase Auth validado · Fazenda: Santa Clara' },
-  { ts: '14:22:47', tipo: 'ENTRADA',  msg: '"Joana 22.5L tarde, Negrinha 24L, Pintada 15.2L"' },
-  { ts: '14:22:47', tipo: 'ANÁLISE',  msg: 'Identificando 3 animais em produção...' },
-  { ts: '14:22:48', tipo: 'REGISTRO', msg: 'PRODUÇÃO: Joana — 22.5L (Tarde)' },
-  { ts: '14:22:48', tipo: 'REGISTRO', msg: 'PRODUÇÃO: Negrinha — 24.0L (Tarde)' },
-  { ts: '14:22:48', tipo: 'REGISTRO', msg: 'PRODUÇÃO: Pintada — 15.2L (Tarde)' },
-  { ts: '14:22:49', tipo: 'RESUMO',   msg: 'TOTAL SESSÃO: 61.7L · RECEITA EST.: R$ 197.44' },
-  { ts: '14:22:49', tipo: 'SISTEMA',  msg: 'Firestore atualizado · 3 documentos gravados' },
-]
+// ─── HOOK DRAG ────────────────────────────────────────────────────────────────
+function useDraggable(storageKey, defaultPos) {
+  const [pos, setPos] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(storageKey)) || defaultPos }
+    catch { return defaultPos }
+  })
+  const dragging = useRef(false)
+  const origin   = useRef({ mx: 0, my: 0, px: 0, py: 0 })
 
-const TIPO_COR = {
-  SISTEMA: 'text-slate-500', ENTRADA: 'text-blue-400',
-  ANÁLISE: 'text-amber-400', REGISTRO: 'text-emerald-400', RESUMO: 'text-slate-200',
-}
+  const onMouseDown = useCallback((e) => {
+    if (e.button !== 0) return
+    dragging.current = true
+    origin.current = { mx: e.clientX, my: e.clientY, px: pos.x, py: pos.y }
+    e.preventDefault()
+  }, [pos])
 
-// ─── AI TERMINAL ──────────────────────────────────────────────────────────────
-function AITerminalWidget() {
-  const [open, setOpen]       = useState(false)
-  const [logs, setLogs]       = useState(LOG_IA.slice(0, 3))
-  const [running, setRunning] = useState(false)
-  const ref = useRef(null)
+  const onTouchStart = useCallback((e) => {
+    dragging.current = true
+    const t = e.touches[0]
+    origin.current = { mx: t.clientX, my: t.clientY, px: pos.x, py: pos.y }
+  }, [pos])
 
   useEffect(() => {
-    if (ref.current) ref.current.scrollTop = ref.current.scrollHeight
-  }, [logs])
-
-  async function runDemo() {
-    if (running) return
-    setRunning(true)
-    setLogs(LOG_IA.slice(0, 3))
-    for (let i = 3; i < LOG_IA.length; i++) {
-      await new Promise(r => setTimeout(r, 600))
-      setLogs(prev => [...prev, LOG_IA[i]])
+    function move(mx, my) {
+      if (!dragging.current) return
+      const dx = mx - origin.current.mx
+      const dy = my - origin.current.my
+      const newPos = {
+        x: Math.max(0, Math.min(window.innerWidth  - 60, origin.current.px + dx)),
+        y: Math.max(0, Math.min(window.innerHeight - 60, origin.current.py + dy)),
+      }
+      setPos(newPos)
+      localStorage.setItem(storageKey, JSON.stringify(newPos))
     }
-    setRunning(false)
+    function end() { dragging.current = false }
+    const mm = e => move(e.clientX, e.clientY)
+    const tm = e => { const t = e.touches[0]; move(t.clientX, t.clientY) }
+    window.addEventListener('mousemove', mm)
+    window.addEventListener('mouseup',   end)
+    window.addEventListener('touchmove', tm, { passive: true })
+    window.addEventListener('touchend',  end)
+    return () => {
+      window.removeEventListener('mousemove', mm)
+      window.removeEventListener('mouseup',   end)
+      window.removeEventListener('touchmove', tm)
+      window.removeEventListener('touchend',  end)
+    }
+  }, [storageKey])
+
+  return { pos, onMouseDown, onTouchStart }
+}
+
+// ─── CHAT IA (estilo WhatsApp) ────────────────────────────────────────────────
+function ChatWidget() {
+  const [open, setOpen]       = useState(false)
+  const [msgs, setMsgs]       = useState([
+    { de: 'bot', texto: '👋 Olá! Sou o assistente MilkShow.\nDigite algo como "Joana 22L manhã" ou "qual meu saldo?"' }
+  ])
+  const [input, setInput]     = useState('')
+  const [loading, setLoading] = useState(false)
+  const scrollRef = useRef(null)
+  const inputRef  = useRef(null)
+
+  const { pos, onMouseDown, onTouchStart } = useDraggable('chat-pos', {
+    x: typeof window !== 'undefined' ? window.innerWidth - 72 : 300,
+    y: typeof window !== 'undefined' ? window.innerHeight - 140 : 500,
+  })
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+  }, [msgs, open])
+
+  async function enviar(e) {
+    e?.preventDefault()
+    const texto = input.trim()
+    if (!texto || loading) return
+    setInput('')
+    setMsgs(m => [...m, { de: 'user', texto }])
+    setLoading(true)
+    try {
+      const { resposta } = await api.chat(texto)
+      const textoFinal = resposta === '__botoes_enviados__'
+        ? '✅ Ação processada! Recarregue o tab para ver as mudanças.'
+        : resposta
+      setMsgs(m => [...m, { de: 'bot', texto: textoFinal }])
+    } catch(err) {
+      setMsgs(m => [...m, { de: 'bot', texto: `Erro: ${err.message}` }])
+    } finally {
+      setLoading(false)
+      setTimeout(() => inputRef.current?.focus(), 50)
+    }
+  }
+
+  function handleKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviar() }
   }
 
   return (
     <>
-      <button onClick={() => setOpen(o => !o)} aria-label="Abrir terminal IA"
-        className="fixed right-4 z-40 flex items-center gap-2 px-3.5 py-2 rounded-lg text-[11px] font-mono transition-all"
+      {/* Botão flutuante */}
+      <button
+        aria-label="Chat IA"
+        onMouseDown={onMouseDown}
+        onTouchStart={onTouchStart}
+        onClick={() => setOpen(o => !o)}
+        className="fixed z-40 w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-transform active:scale-95 select-none"
         style={{
-          bottom: 'calc(env(safe-area-inset-bottom, 0px) + 72px)',
-          background: '#0f172a', border: '1px solid #1e293b', color: '#64748b',
+          left: pos.x, top: pos.y,
+          background: `linear-gradient(135deg, ${C.brand2}, ${C.brand})`,
+          boxShadow: '0 4px 20px rgba(34,197,94,0.4)',
+          cursor: 'grab',
         }}>
-        <Terminal size={12} className="text-blue-400" />
-        <span className="hidden sm:inline">IA Terminal</span>
-        {running && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />}
+        <MessageCircle size={20} color="#fff" />
+        {loading && (
+          <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-white animate-pulse border-2 border-green-500" />
+        )}
       </button>
 
+      {/* Painel chat */}
       {open && (
-        <div className="fixed right-4 z-50 flex flex-col rounded-xl shadow-2xl"
+        <div className="fixed z-50 flex flex-col rounded-2xl overflow-hidden shadow-2xl"
              style={{
-               bottom: 'calc(env(safe-area-inset-bottom, 0px) + 120px)',
-               width: 'min(480px, calc(100vw - 32px))', maxHeight: 380,
-               background: '#030712', border: '1px solid #1e293b',
+               left: Math.min(pos.x, window.innerWidth - 360),
+               top:  Math.max(8, pos.y - 460),
+               width: 'min(340px, calc(100vw - 24px))',
+               height: 440,
+               background: '#fff',
+               border: `1px solid ${C.border}`,
+               boxShadow: '0 24px 64px rgba(0,0,0,0.15)',
              }}>
-          <div className="flex items-center justify-between px-4 py-3 shrink-0"
-               style={{ borderBottom: '1px solid #1e293b' }}>
-            <div className="flex items-center gap-2">
-              <Terminal size={12} className="text-blue-400" />
-              <span className="text-slate-400 text-[11px] font-mono">MilkShow AI — log stream</span>
-              {running && <span className="flex items-center gap-1 text-emerald-500 text-[10px] font-mono">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />processando
-              </span>}
+
+          {/* Header */}
+          <div
+            className="flex items-center justify-between px-4 py-3 shrink-0 cursor-grab active:cursor-grabbing"
+            onMouseDown={onMouseDown} onTouchStart={onTouchStart}
+            style={{ background: `linear-gradient(135deg, ${C.brand2}, ${C.brand})` }}>
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+                <Cpu size={15} color="#fff" />
+              </div>
+              <div>
+                <p className="text-[13px] font-bold text-white leading-tight">MilkShow IA</p>
+                <div className="flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-white/80 animate-pulse" />
+                  <span className="text-[10px] text-white/80">online</span>
+                </div>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <button onClick={runDemo} disabled={running}
-                className="text-blue-400 hover:text-blue-300 text-[10px] font-mono px-2 py-0.5 rounded border border-blue-500/30 disabled:opacity-40">
-                {running ? 'SIMULANDO...' : 'SIMULAR'}
-              </button>
-              <button onClick={() => setOpen(false)} className="text-slate-700 hover:text-slate-400 ml-1">
-                <X size={13} />
-              </button>
-            </div>
+            <button onClick={() => setOpen(false)} className="text-white/70 hover:text-white transition-colors">
+              <X size={16} />
+            </button>
           </div>
-          <div ref={ref} className="flex-1 overflow-y-auto p-4 font-mono text-[11px] space-y-1">
-            {logs.map((l, i) => (
-              <div key={i} className="flex gap-3">
-                <span className="text-slate-700 shrink-0 tabular-nums">{l.ts}</span>
-                <span className={`shrink-0 w-16 ${TIPO_COR[l.tipo] || 'text-slate-500'}`}>[{l.tipo}]</span>
-                <span className="text-slate-400 break-all">{l.msg}</span>
+
+          {/* Mensagens */}
+          <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-2"
+               style={{ background: '#f8faf8' }}>
+            {msgs.map((m, i) => (
+              <div key={i} className={`flex ${m.de === 'user' ? 'justify-end' : 'justify-start'}`}>
+                {m.de === 'bot' && (
+                  <div className="w-6 h-6 rounded-full bg-green-100 flex items-center justify-center shrink-0 mr-1.5 mt-auto">
+                    <Milk size={12} className="text-green-600" />
+                  </div>
+                )}
+                <div className={`max-w-[78%] px-3 py-2 rounded-2xl text-[12px] leading-relaxed whitespace-pre-wrap break-words ${
+                  m.de === 'user' ? 'rounded-tr-sm' : 'rounded-tl-sm'
+                }`}
+                  style={{
+                    background: m.de === 'user'
+                      ? `linear-gradient(135deg, ${C.brand2}, ${C.brand})`
+                      : '#ffffff',
+                    color: m.de === 'user' ? '#fff' : '#374151',
+                    border: m.de === 'bot' ? '1px solid #e5e7eb' : 'none',
+                    boxShadow: m.de === 'bot' ? '0 1px 3px rgba(0,0,0,0.06)' : 'none',
+                  }}>
+                  {m.texto}
+                </div>
               </div>
             ))}
+            {loading && (
+              <div className="flex justify-start">
+                <div className="w-6 h-6 rounded-full bg-green-100 flex items-center justify-center shrink-0 mr-1.5">
+                  <Milk size={12} className="text-green-600" />
+                </div>
+                <div className="px-4 py-3 rounded-2xl rounded-tl-sm flex items-center gap-1 bg-white border border-slate-100">
+                  {[0,1,2].map(i => (
+                    <span key={i} className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce"
+                          style={{ animationDelay: `${i*150}ms` }} />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
+
+          {/* Input */}
+          <form onSubmit={enviar} className="flex items-end gap-2 px-3 py-3 shrink-0 bg-white"
+                style={{ borderTop: '1px solid #f0f0f0' }}>
+            <textarea
+              ref={inputRef}
+              rows={1}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={handleKey}
+              placeholder="Ex: Joana 22L manhã..."
+              className="flex-1 resize-none text-[13px] text-slate-700 placeholder-slate-400 bg-slate-50 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-200 border border-slate-200"
+              style={{ minHeight: 36, maxHeight: 96, lineHeight: '1.5' }}
+            />
+            <button type="submit" disabled={!input.trim() || loading}
+              className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-all active:scale-90 disabled:opacity-40"
+              style={{ background: `linear-gradient(135deg, ${C.brand2}, ${C.brand})` }}>
+              <ArrowUp size={14} color="#fff" />
+            </button>
+          </form>
         </div>
       )}
     </>
   )
 }
 
-// ─── FAB — REGISTRO RÁPIDO DE PRODUÇÃO ───────────────────────────────────────
-function FABProducao() {
+// ─── FAB ORDENHA RÁPIDA ───────────────────────────────────────────────────────
+function FABOrdenha() {
   const [open, setOpen]       = useState(false)
   const [animais, setAnimais] = useState([])
   const [saving, setSaving]   = useState(false)
@@ -157,6 +304,21 @@ function FABProducao() {
   const [form, setForm]       = useState({
     data: hoje(), id_animal: '', nome_animal: '', leite: '', racao: '', turno: 'manhã',
   })
+
+  const { pos, onMouseDown, onTouchStart } = useDraggable('fab-pos', {
+    x: typeof window !== 'undefined' ? window.innerWidth / 2 - 70 : 300,
+    y: typeof window !== 'undefined' ? window.innerHeight - 110 : 500,
+  })
+
+  const downTime = useRef(0)
+
+  function handleDown(e) {
+    downTime.current = Date.now()
+    onMouseDown(e)
+  }
+  function handleClick() {
+    if (Date.now() - downTime.current < 200) setOpen(true)
+  }
 
   useEffect(() => {
     if (open) {
@@ -184,28 +346,35 @@ function FABProducao() {
 
   return (
     <>
-      {/* Botão FAB */}
-      <button onClick={() => setOpen(true)} aria-label="Registrar produção rápida"
-        className="fixed left-4 z-40 flex items-center gap-2 px-4 py-2.5 rounded-xl text-[12px] font-semibold transition-all active:scale-95 shadow-lg"
+      <button
+        aria-label="Nova Ordenha"
+        onMouseDown={handleDown}
+        onTouchStart={e => { downTime.current = Date.now(); onTouchStart(e) }}
+        onClick={handleClick}
+        className="fixed z-40 flex items-center gap-2 px-4 py-2.5 rounded-full text-[13px] font-bold shadow-lg transition-all active:scale-95 select-none"
         style={{
-          bottom: 'calc(env(safe-area-inset-bottom, 0px) + 72px)',
-          background: '#16a34a', color: '#fff',
-          boxShadow: '0 4px 20px rgba(22,163,74,0.35)',
+          left: pos.x, top: pos.y,
+          background: `linear-gradient(135deg, ${C.brand2}, ${C.brand})`,
+          color: '#fff',
+          boxShadow: '0 4px 20px rgba(34,197,94,0.4)',
+          cursor: 'grab',
         }}>
-        <Plus size={15} />
-        <span className="hidden sm:inline">Ordenha Rápida</span>
-        <span className="sm:hidden">+</span>
+        <Plus size={16} strokeWidth={2.5} />
+        <span>Nova Ordenha</span>
       </button>
 
-      {/* Modal */}
-      <Modal open={open} onClose={() => setOpen(false)} title="Registrar Ordenha">
+      <Modal open={open} onClose={() => setOpen(false)} title="Registrar Ordenha"
+             accentColor={`linear-gradient(135deg, ${C.brand2}, ${C.brand})`}>
         {toast ? (
-          <div className="py-6 text-center">
-            <p className="text-emerald-400 font-mono text-sm">{toast}</p>
+          <div className="py-8 text-center">
+            <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-3">
+              <Check size={20} className="text-green-600" />
+            </div>
+            <p className="text-[14px] font-semibold text-green-700">{toast}</p>
           </div>
         ) : (
           <form onSubmit={salvar} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-3">
               <Field label="Data">
                 <Input type="date" value={form.data} onChange={e => setForm(f => ({ ...f, data: e.target.value }))} />
               </Field>
@@ -217,11 +386,11 @@ function FABProducao() {
             </div>
             <Field label="Animal">
               <Select value={form.id_animal} onChange={e => setAnimal(e.target.value)}>
-                <option value="">Selecione...</option>
+                <option value="">Selecione o animal...</option>
                 {animais.map(a => <option key={a.id || a.nome} value={a.id || a.nome}>{a.nome}</option>)}
               </Select>
             </Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-3">
               <Field label="Litros *">
                 <Input type="number" step="0.1" min="0" placeholder="0.0" inputMode="decimal"
                        value={form.leite} onChange={e => setForm(f => ({ ...f, leite: e.target.value }))} />
@@ -244,128 +413,211 @@ function FABProducao() {
   )
 }
 
-// ─── SIDEBAR (desktop md+) ────────────────────────────────────────────────────
+// ─── SIDEBAR (desktop) ────────────────────────────────────────────────────────
 function Sidebar({ active, setActive, collapsed, setCollapsed, onLogout, modulos }) {
-  const W = collapsed ? 64 : 224
+  const user = (() => { try { return JSON.parse(localStorage.getItem('milkshow_user') || '{}') } catch { return {} } })()
+  const initials = (user.nome || 'MS').split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
+
   return (
-    <aside className="hidden md:flex flex-col shrink-0 transition-all duration-200"
-           style={{ width: W, background: '#080e1d', borderRight: '1px solid #1e293b' }}>
-      <div className="flex items-center gap-3 px-3.5 py-0"
-           style={{ borderBottom: '1px solid #1e293b', height: 60 }}>
-        <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
-             style={{ background: '#0f172a', border: '1px solid #16a34a33' }}>
-          <Milk size={14} className="text-emerald-500" />
+    <aside
+      className="hidden md:flex flex-col shrink-0 transition-all duration-200"
+      style={{
+        width: collapsed ? 64 : 200,
+        background: C.sidebar,
+        borderRight: `1px solid ${C.border}`,
+      }}>
+
+      {/* Logo — mesma altura do top bar */}
+      <div className="flex items-center justify-center"
+           style={{ height: 56, borderBottom: `1px solid ${C.border}` }}>
+        <div className="flex items-center gap-2">
+          <img src="/app/logo.png" alt="MilkShow"
+               className="shrink-0 object-contain"
+               style={{ width: collapsed ? 36 : 36, height: 36 }} />
+          {!collapsed && (
+            <div className="leading-tight min-w-0">
+              <div className="text-[15px] font-extrabold tracking-tight truncate" style={{ color: C.text }}>MilkShow</div>
+              <div className="text-[9px] font-bold uppercase tracking-widest" style={{ color: C.brand }}>Enterprise</div>
+            </div>
+          )}
         </div>
-        {!collapsed && (
-          <div className="min-w-0 leading-tight">
-            <span className="text-slate-100 font-semibold text-sm tracking-tight">MilkShow</span>
-            <span className="block text-emerald-600 text-[9px] font-mono tracking-widest uppercase">Enterprise</span>
-          </div>
-        )}
       </div>
 
-      <nav className="flex-1 py-3 space-y-0.5 px-2 overflow-y-auto">
+      {/* Nav */}
+      <nav className="flex-1 py-3 space-y-px px-2 overflow-y-auto">
         {modulos.map(({ id, Icon, label }) => {
           const isActive = active === id
           return (
             <button key={id} onClick={() => setActive(id)} aria-label={label}
               title={collapsed ? label : undefined}
-              className="w-full flex items-center gap-3 px-2.5 rounded-lg transition-all duration-100 text-left group"
+              className="w-full flex items-center gap-3 px-2.5 rounded-lg text-left transition-all duration-150"
               style={{
-                minHeight: 44,
-                background:  isActive ? 'rgba(22,163,74,0.12)' : 'transparent',
-                borderLeft:  isActive ? '2px solid #16a34a' : '2px solid transparent',
+                minHeight: 40,
+                background: isActive ? C.brandBg : 'transparent',
+                color: isActive ? C.brand2 : C.sub,
+                fontWeight: isActive ? 600 : 400,
+                borderLeft: isActive ? `3px solid ${C.brand}` : '3px solid transparent',
               }}>
-              <Icon size={15} className={isActive ? 'text-emerald-400 shrink-0' : 'text-slate-600 group-hover:text-slate-400 shrink-0'} />
+              <Icon size={17} className="shrink-0" style={{ color: isActive ? C.brand : C.muted }} />
               {!collapsed && (
-                <span className={`text-[13px] font-medium truncate ${isActive ? 'text-emerald-300' : 'text-slate-500 group-hover:text-slate-300'}`}>
-                  {label}
-                </span>
+                <span className="text-[13px] truncate">{label}</span>
               )}
             </button>
           )
         })}
       </nav>
 
-      <div className="px-2 py-2 space-y-0.5" style={{ borderTop: '1px solid #1e293b' }}>
+      {/* Footer */}
+      <div className="px-2 py-3 space-y-1" style={{ borderTop: `1px solid ${C.border}` }}>
+        {!collapsed && (
+          <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg mb-1"
+               style={{ background: '#f8faf8' }}>
+            <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-[11px] font-bold text-white"
+                 style={{ background: C.brand }}>
+              {initials}
+            </div>
+            <span className="text-[12px] font-medium truncate" style={{ color: C.text }}>{user.nome || 'Usuário'}</span>
+          </div>
+        )}
         <button onClick={() => setCollapsed(c => !c)}
-          className="w-full flex items-center gap-3 px-2.5 rounded-lg text-slate-600 hover:text-slate-400 transition-colors"
-          style={{ minHeight: 40 }}>
-          {collapsed ? <ChevronRight size={15} /> : <><ChevronLeft size={15} /><span className="text-[13px]">Recolher</span></>}
+          className="w-full flex items-center gap-3 px-2.5 py-2 rounded-lg transition-colors hover:bg-slate-50"
+          style={{ color: C.muted }}>
+          {collapsed ? <ChevronRight size={15} /> : <><ChevronLeft size={15} /><span className="text-[12px]">Recolher</span></>}
         </button>
         <button onClick={onLogout}
-          className="w-full flex items-center gap-3 px-2.5 rounded-lg text-slate-600 hover:text-red-400 transition-colors"
-          style={{ minHeight: 40 }}>
-          <LogOut size={15} />
-          {!collapsed && <span className="text-[13px]">Sair</span>}
+          className="w-full flex items-center gap-3 px-2.5 py-2 rounded-lg transition-colors hover:bg-red-50 group"
+          style={{ color: C.muted }}>
+          <LogOut size={15} className="group-hover:text-red-500 transition-colors" />
+          {!collapsed && <span className="text-[12px] group-hover:text-red-500 transition-colors">Sair</span>}
         </button>
       </div>
     </aside>
   )
 }
 
-// ─── BOTTOM NAV (mobile < md) ─────────────────────────────────────────────────
+// ─── TOP BAR ──────────────────────────────────────────────────────────────────
+function TopBar({ active, modulos, fazenda, onFazendaClick, onOpenNav, onLogout }) {
+  const modulo = modulos.find(m => m.id === active)
+  const user = (() => { try { return JSON.parse(localStorage.getItem('milkshow_user') || '{}') } catch { return {} } })()
+  const [menuOpen, setMenuOpen] = useState(false)
+
+  return (
+    <header className="flex items-center gap-3 px-4 shrink-0 z-20"
+            style={{ height: 56, background: C.topbar, boxShadow: '0 2px 8px rgba(34,197,94,0.25)' }}>
+
+      {/* Mobile: menu burger */}
+      <button className="md:hidden text-white/90 hover:text-white" onClick={onOpenNav}>
+        <Menu size={20} />
+      </button>
+
+      {/* Título do módulo atual */}
+      <div className="flex-1 min-w-0">
+        <span className="text-[16px] font-bold text-white tracking-tight">
+          {modulo?.label || 'MilkShow'}
+        </span>
+      </div>
+
+      {/* Seletor de fazenda */}
+      <button onClick={onFazendaClick}
+        className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12px] font-semibold text-white/90 hover:text-white hover:bg-white/10 transition-colors">
+        <Building2 size={14} />
+        <span className="max-w-[120px] truncate">{fazenda || 'Minha Fazenda'}</span>
+        <ChevronDown size={12} />
+      </button>
+
+      {/* Sino de notificações */}
+      <button className="w-8 h-8 rounded-full flex items-center justify-center text-white/80 hover:text-white hover:bg-white/10 transition-colors">
+        <Bell size={16} />
+      </button>
+
+      {/* Avatar + menu */}
+      <div className="relative">
+        <button onClick={() => setMenuOpen(o => !o)}
+          className="w-8 h-8 rounded-full flex items-center justify-center text-[12px] font-bold text-green-700 transition-all hover:ring-2 hover:ring-white/40"
+          style={{ background: '#fff' }}>
+          {(user.nome || 'MS').split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+        </button>
+        {menuOpen && (
+          <div className="absolute right-0 top-10 rounded-xl shadow-xl bg-white border border-slate-100 py-1 min-w-[160px] z-50"
+               style={{ boxShadow: '0 8px 32px rgba(0,0,0,0.12)' }}>
+            <div className="px-3 py-2 border-b border-slate-50">
+              <p className="text-[12px] font-semibold text-slate-700 truncate">{user.nome || 'Usuário'}</p>
+              <p className="text-[11px] text-slate-400 truncate">{user.email || ''}</p>
+            </div>
+            <button onClick={() => { setMenuOpen(false); onLogout() }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-red-500 hover:bg-red-50 transition-colors">
+              <LogOut size={14} /> Sair
+            </button>
+          </div>
+        )}
+      </div>
+    </header>
+  )
+}
+
+// ─── BOTTOM NAV (mobile) ──────────────────────────────────────────────────────
 function BottomNav({ active, setActive, modulos }) {
   const [maisOpen, setMaisOpen] = useState(false)
-  const bottomNav = modulos.filter(m => ['bi', 'producao', 'rebanho', 'calendario'].includes(m.id))
-  const overflow  = modulos.filter(m => !['bi', 'producao', 'rebanho', 'calendario'].includes(m.id))
+  const pinned   = modulos.filter(m => ['bi','producao','rebanho','calendario'].includes(m.id))
+  const overflow = modulos.filter(m => !['bi','producao','rebanho','calendario'].includes(m.id))
+  const hasOverflowActive = overflow.some(m => m.id === active)
 
-  function selectModule(id) { setActive(id); setMaisOpen(false) }
+  function select(id) { setActive(id); setMaisOpen(false) }
 
   return (
     <>
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-30 flex items-stretch"
-           style={{
-             background: 'rgba(8,14,29,0.97)', borderTop: '1px solid #1e293b',
-             backdropFilter: 'blur(12px)', paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-           }}>
-        {bottomNav.map(({ id, Icon, label }) => {
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-30 flex items-stretch bg-white"
+           style={{ borderTop: `1px solid ${C.border}`, paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
+        {pinned.map(({ id, Icon, label }) => {
           const isActive = active === id
           return (
-            <button key={id} onClick={() => selectModule(id)} aria-label={label}
-              className="flex-1 flex flex-col items-center justify-center gap-1 py-2.5 transition-all relative"
-              style={{ minHeight: 60 }}>
-              <Icon size={20} className={isActive ? 'text-emerald-400' : 'text-slate-600'} />
-              <span className={`text-[10px] font-medium ${isActive ? 'text-emerald-400' : 'text-slate-600'}`}>
+            <button key={id} onClick={() => select(id)} aria-label={label}
+              className="flex-1 flex flex-col items-center justify-center gap-1 py-2.5 relative transition-colors"
+              style={{ minHeight: 58 }}>
+              {isActive && (
+                <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full"
+                      style={{ background: C.brand }} />
+              )}
+              <Icon size={19} style={{ color: isActive ? C.brand : C.muted }} />
+              <span className="text-[10px] font-medium" style={{ color: isActive ? C.brand : C.muted }}>
                 {label}
               </span>
-              {isActive && <span className="absolute top-0 w-6 h-0.5 rounded-b-full bg-emerald-500" />}
             </button>
           )
         })}
+
+        {/* Mais */}
         {overflow.length > 0 && (
-          <button onClick={() => setMaisOpen(o => !o)} aria-label="Mais módulos"
-            className="flex-1 flex flex-col items-center justify-center gap-1 py-2.5 transition-all"
-            style={{ minHeight: 60 }}>
-            <MoreHorizontal size={20} className={overflow.some(m => m.id === active) ? 'text-emerald-400' : 'text-slate-600'} />
-            <span className={`text-[10px] font-medium ${overflow.some(m => m.id === active) ? 'text-emerald-400' : 'text-slate-600'}`}>
-              Mais
-            </span>
+          <button onClick={() => setMaisOpen(o => !o)}
+            className="flex-1 flex flex-col items-center justify-center gap-1 py-2.5 relative"
+            style={{ minHeight: 58 }}>
+            {hasOverflowActive && (
+              <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 rounded-full"
+                    style={{ background: C.brand }} />
+            )}
+            <MoreVertical size={19} style={{ color: hasOverflowActive ? C.brand : C.muted }} />
+            <span className="text-[10px] font-medium" style={{ color: hasOverflowActive ? C.brand : C.muted }}>Mais</span>
           </button>
         )}
       </nav>
 
+      {/* Drawer overflow */}
       {maisOpen && (
         <div className="md:hidden fixed inset-0 z-40" onClick={() => setMaisOpen(false)}>
-          <div className="absolute bottom-0 left-0 right-0 rounded-t-2xl overflow-hidden"
-               style={{ background: '#0f172a', border: '1px solid #1e293b',
-                        paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 60px)' }}
+          <div className="absolute bottom-16 left-0 right-0 bg-white rounded-t-2xl shadow-2xl"
+               style={{ border: `1px solid ${C.border}` }}
                onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid #1e293b' }}>
-              <span className="text-slate-400 text-sm font-semibold">Mais módulos</span>
-              <button onClick={() => setMaisOpen(false)} className="text-slate-600 hover:text-slate-300 p-1">
-                <X size={16} />
-              </button>
-            </div>
-            <div className="p-4 space-y-1">
+            <div className="w-10 h-1 bg-slate-200 rounded-full mx-auto mt-3 mb-2" />
+            <div className="grid grid-cols-3 gap-2 p-4">
               {overflow.map(({ id, Icon, label }) => {
                 const isActive = active === id
                 return (
-                  <button key={id} onClick={() => selectModule(id)}
-                    className="w-full flex items-center gap-4 px-4 rounded-xl transition-all"
-                    style={{ minHeight: 52, background: isActive ? 'rgba(22,163,74,0.12)' : 'transparent' }}>
-                    <Icon size={18} className={isActive ? 'text-emerald-400' : 'text-slate-500'} />
-                    <span className={`text-sm font-medium ${isActive ? 'text-emerald-300' : 'text-slate-400'}`}>
+                  <button key={id} onClick={() => select(id)}
+                    className="flex flex-col items-center gap-2 p-3 rounded-xl transition-colors"
+                    style={{ background: isActive ? C.brandBg : '#f8faf8' }}>
+                    <Icon size={20} style={{ color: isActive ? C.brand : C.muted }} />
+                    <span className="text-[11px] font-medium text-center leading-tight"
+                          style={{ color: isActive ? C.brand2 : C.sub }}>
                       {label}
                     </span>
                   </button>
@@ -379,104 +631,157 @@ function BottomNav({ active, setActive, modulos }) {
   )
 }
 
-// ─── HEADER ──────────────────────────────────────────────────────────────────
-function Header({ modulo, modulos, onRefresh }) {
-  const mod  = modulos.find(m => m.id === modulo)
+// ─── MOBILE NAV DRAWER ────────────────────────────────────────────────────────
+function MobileDrawer({ open, onClose, active, setActive, onLogout, modulos }) {
+  if (!open) return null
   const user = (() => { try { return JSON.parse(localStorage.getItem('milkshow_user') || '{}') } catch { return {} } })()
-  const initials = (user.nome || 'SC').split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
-  const data = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' })
-
   return (
-    <header className="flex items-center justify-between px-5 shrink-0"
-      style={{ height: 60, borderBottom: '1px solid #1e293b', background: '#020617' }}>
-      <div className="flex items-center gap-2.5 min-w-0">
-        {mod?.Icon && <mod.Icon size={15} className="text-slate-500 shrink-0" />}
-        <span className="text-slate-200 font-semibold text-sm">{mod?.label || 'Dashboard'}</span>
-        <span className="text-slate-700 text-xs hidden sm:inline">/</span>
-        <span className="text-slate-600 text-xs font-mono hidden sm:inline truncate">{user.nome || 'Fazenda'}</span>
-      </div>
-      <div className="flex items-center gap-2 shrink-0">
-        <span className="text-slate-600 text-xs font-mono hidden md:inline">{data}</span>
-        <button onClick={onRefresh} aria-label="Atualizar dados"
-          className="p-1.5 rounded-lg text-slate-600 hover:text-slate-300 transition-colors">
-          <RefreshCw size={14} />
-        </button>
-        <div className="w-7 h-7 rounded-lg flex items-center justify-center"
-             style={{ background: '#0f172a', border: '1px solid #1e293b' }}>
-          <span className="text-slate-400 text-[10px] font-mono font-bold">{initials}</span>
+    <div className="md:hidden fixed inset-0 z-50" onClick={onClose}>
+      <div className="absolute left-0 top-0 bottom-0 w-64 bg-white flex flex-col shadow-2xl"
+           onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3"
+             style={{ background: C.topbar }}>
+          <div className="flex items-center gap-2">
+            <img src="/app/logo.png" alt="MilkShow" className="w-8 h-8 object-contain" />
+            <span className="text-[15px] font-bold text-white">MilkShow</span>
+          </div>
+          <button onClick={onClose} className="text-white/80 hover:text-white">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Nav items */}
+        <nav className="flex-1 py-2 px-2 overflow-y-auto space-y-px">
+          {modulos.map(({ id, Icon, label }) => {
+            const isActive = active === id
+            return (
+              <button key={id} onClick={() => { setActive(id); onClose() }}
+                className="w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-colors"
+                style={{
+                  background: isActive ? C.brandBg : 'transparent',
+                  color: isActive ? C.brand2 : C.sub,
+                  borderLeft: isActive ? `3px solid ${C.brand}` : '3px solid transparent',
+                }}>
+                <Icon size={18} style={{ color: isActive ? C.brand : C.muted }} />
+                <span className="text-[14px] font-medium">{label}</span>
+              </button>
+            )
+          })}
+        </nav>
+
+        {/* Footer */}
+        <div className="p-3 border-t border-slate-100">
+          <div className="flex items-center gap-2 px-2 py-2 rounded-lg bg-slate-50 mb-2">
+            <div className="w-8 h-8 rounded-full flex items-center justify-center text-[12px] font-bold text-white"
+                 style={{ background: C.brand }}>
+              {(user.nome || 'MS').split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+            </div>
+            <div>
+              <p className="text-[13px] font-semibold text-slate-700">{user.nome || 'Usuário'}</p>
+              <p className="text-[11px] text-slate-400">{user.email || ''}</p>
+            </div>
+          </div>
+          <button onClick={() => { onLogout(); onClose() }}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-red-500 hover:bg-red-50 transition-colors">
+            <LogOut size={15} />
+            <span className="text-[13px] font-medium">Sair</span>
+          </button>
         </div>
       </div>
-    </header>
+    </div>
   )
 }
 
-// ─── MAIN ─────────────────────────────────────────────────────────────────────
-export default function Enterprise() {
-  const [modulo, setModulo]       = useState('bi')
-  const [collapsed, setCollapsed] = useState(false)
-  const [refreshKey, setRefreshKey] = useState(0)
+// ─── TAB CONTENT WRAPPER ──────────────────────────────────────────────────────
+function TabContent({ active, fazendaId }) {
+  const props = { fazendaId }
+  switch (active) {
+    case 'bi':         return <TabBI         {...props} />
+    case 'producao':   return <TabProducao   {...props} />
+    case 'rebanho':    return <TabRebanho    {...props} />
+    case 'financeiro': return <TabFinanceiro {...props} />
+    case 'calendario': return <TabCalendario {...props} />
+    case 'armazem':    return <TabArmazem    {...props} />
+    case 'vet':        return <TabVet        {...props} />
+    case 'sanidade':   return <TabSanidade   {...props} />
+    case 'bercario':   return <TabBercario   {...props} />
+    case 'nutricao':   return <TabNutricao   {...props} />
+    case 'ranking':    return <TabRanking    {...props} />
+    case 'config':     return <TabConfig     {...props} />
+    default:           return null
+  }
+}
 
+// ─── APP SHELL ────────────────────────────────────────────────────────────────
+export default function Enterprise({ user, fazendaId, fazendaNome, onLogout }) {
   const permissoes = getPermissoes()
   const modulos    = filtrarModulos(permissoes)
 
-  // Garante que o módulo ativo seja acessível
+  const [active,    setActive]    = useState('bi')
+  const [collapsed, setCollapsed] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+
+  // Fecha dropdown ao clicar fora
   useEffect(() => {
-    if (!modulos.find(m => m.id === modulo)) {
-      setModulo(modulos[0]?.id || 'bi')
+    function close(e) {
+      if (!e.target.closest('[data-menu]')) {}
     }
-  }, [modulos, modulo])
-
-  function handleLogout() {
-    localStorage.removeItem('milkshow_token')
-    localStorage.removeItem('milkshow_user')
-    window.location.href = '/app/login'
-  }
-
-  function forceRefresh() { setRefreshKey(k => k + 1) }
-
-  // Auto-refresh a cada 90s — muda a key para forçar remount das tabs
-  useEffect(() => {
-    const id = setInterval(forceRefresh, 90000)
-    return () => clearInterval(id)
+    window.addEventListener('click', close)
+    return () => window.removeEventListener('click', close)
   }, [])
 
-  const TAB_MAP = {
-    bi:         <TabBI         key={`bi-${refreshKey}`} />,
-    producao:   <TabProducao   key={`producao-${refreshKey}`} />,
-    rebanho:    <TabRebanho    key={`rebanho-${refreshKey}`} />,
-    financeiro: <TabFinanceiro key={`financeiro-${refreshKey}`} />,
-    calendario: <TabCalendario key={`calendario-${refreshKey}`} />,
-    armazem:    <TabArmazem    key={`armazem-${refreshKey}`} />,
-    vet:        <TabVet        key={`vet-${refreshKey}`} />,
-    sanidade:   <TabSanidade   key={`sanidade-${refreshKey}`} />,
-    bercario:   <TabBercario   key={`bercario-${refreshKey}`} />,
-    config:     <TabConfig     key={`config-${refreshKey}`} />,
-  }
-
   return (
-    <div className="flex h-[100dvh] overflow-hidden"
-         style={{ background: '#020617', fontFamily: "'Inter', system-ui, sans-serif" }}>
+    <div className="flex h-screen w-screen overflow-hidden" style={{ background: C.bg }}>
 
+      {/* Sidebar desktop */}
       <Sidebar
-        active={modulo} setActive={setModulo}
-        collapsed={collapsed} setCollapsed={setCollapsed}
-        onLogout={handleLogout} modulos={modulos}
+        active={active}
+        setActive={setActive}
+        collapsed={collapsed}
+        setCollapsed={setCollapsed}
+        onLogout={onLogout}
+        modulos={modulos}
       />
 
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <Header modulo={modulo} modulos={modulos} onRefresh={forceRefresh} />
+      {/* Drawer mobile */}
+      <MobileDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        active={active}
+        setActive={setActive}
+        onLogout={onLogout}
+        modulos={modulos}
+      />
 
-        <main className="flex-1 overflow-hidden flex flex-col"
-              style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
-          <div className="flex-1 overflow-hidden flex flex-col md:pb-0 pb-[60px]">
-            {TAB_MAP[modulo]}
-          </div>
+      {/* Coluna principal */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+
+        {/* Top bar */}
+        <TopBar
+          active={active}
+          modulos={modulos}
+          fazenda={fazendaNome}
+          onFazendaClick={() => setActive('config')}
+          onOpenNav={() => setDrawerOpen(true)}
+          onLogout={onLogout}
+        />
+
+        {/* Conteúdo dos tabs */}
+        <main className="flex-1 overflow-y-auto pb-16 md:pb-0"
+              style={{ background: C.bg, width: '100%', minWidth: 0 }}>
+          <TabContent active={active} fazendaId={fazendaId} />
         </main>
+
+        {/* Bottom nav mobile */}
+        <BottomNav active={active} setActive={setActive} modulos={modulos} />
       </div>
 
-      <BottomNav active={modulo} setActive={setModulo} modulos={modulos} />
-      <AITerminalWidget />
-      <FABProducao />
+      {/* FAB Nova Ordenha */}
+      <FABOrdenha />
+
+      {/* Chat IA */}
+      <ChatWidget />
     </div>
   )
 }

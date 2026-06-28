@@ -1,0 +1,16 @@
+{
+  "appId": "com.milshow.app",
+  "appName": "MilkShow",
+  "webDir": "dist",
+  "server": {
+    "url": "https://milshow.com.br/app/",
+    "cleartext": false
+  },
+  "ios": {
+    "scheme": "MilkShow",
+    "backgroundColor": "#060c09"
+  },
+  "android": {
+    "backgroundColor": "#060c09"
+  }
+}

@@ -230,6 +230,14 @@ class EstoqueInput(BaseModel):
     categoria: str = "Outros"
     min_alerta: Optional[float] = None
 
+class UsuarioWppInput(BaseModel):
+    tel: str          # aceita (83) 99999-0000 ou 5583999990000
+    nome: str
+    perfil: str       # 'admin' | 'operador' | 'vet' | 'visualizador'
+
+class ChatInput(BaseModel):
+    mensagem: str
+
 
 # ─────────────────────────────────────────────
 # AUTH
@@ -574,6 +582,95 @@ def remover_estoque(item_id: str, user=Depends(_get_user)):
     _coll(fid, "estoque").document(item_id).delete()
     notify_update(fid, "estoque")
     return {"ok": True}
+
+
+# ─────────────────────────────────────────────
+# USUÁRIOS WHATSAPP
+# ─────────────────────────────────────────────
+PERFIS_WPP = {"admin", "operador", "vet", "visualizador"}
+
+# Mapeamento perfil app → permissões do bot (usadas em _tem_permissao)
+_PERFIL_PARA_PERMISSOES = {
+    "admin":        ["admin"],
+    "operador":     ["ordenha", "armazem"],          # peão: registra produção e usa estoque
+    "vet":          ["financeiro", "rebanho"],        # veterinário: animais + gastos sanit.
+    "visualizador": [],                               # só consultas (sem permissão de escrita)
+}
+
+@mobile_router.get("/usuarios_wpp")
+def listar_usuarios_wpp(user=Depends(_get_user)):
+    fid = user["fazenda_id"]
+    docs = _coll(fid, "usuarios_wpp").stream()
+    return [{"id": d.id, **d.to_dict()} for d in docs]
+
+@mobile_router.post("/usuarios_wpp")
+def adicionar_usuario_wpp(body: UsuarioWppInput, user=Depends(_get_user)):
+    fid  = user["fazenda_id"]
+    if body.perfil not in PERFIS_WPP:
+        raise HTTPException(400, f"Perfil inválido. Use: {', '.join(PERFIS_WPP)}")
+    tel = _normalizar_tel(body.tel)
+    if len(tel) < 10:
+        raise HTTPException(400, "Número inválido. Use DDD + número: (83) 99999-0000")
+
+    permissoes = _PERFIL_PARA_PERMISSOES[body.perfil]
+    agora = datetime.datetime.now().isoformat()
+    doc_ui = {"tel": tel, "nome": body.nome.strip(), "perfil": body.perfil,
+              "ativo": True, "criado_em": agora}
+
+    db = _db()
+    # 1. Salva por fazenda (para a UI do app)
+    _coll(fid, "usuarios_wpp").document(tel).set(doc_ui)
+
+    # 2. Salva em registros_tel — fonte de verdade do bot (multi-tenant isolado por fazenda_id)
+    db.collection("registros_tel").document(tel).set({
+        "tel":        tel,
+        "nome":       body.nome.strip(),
+        "fazenda_id": fid,
+        "permissoes": permissoes,
+        "perfil":     body.perfil,
+        "ativo":      True,
+        "criado_em":  agora,
+        "criado_via": "app",
+    }, merge=True)
+
+    return {"ok": True, "tel": tel, "permissoes": permissoes}
+
+@mobile_router.delete("/usuarios_wpp/{tel}")
+def remover_usuario_wpp(tel: str, user=Depends(_get_user)):
+    fid = user["fazenda_id"]
+    tel_norm = _normalizar_tel(tel)
+    db = _db()
+    # Remove da coleção por fazenda (UI)
+    _coll(fid, "usuarios_wpp").document(tel_norm).delete()
+    # Desativa em registros_tel (mantém histórico mas bloqueia o bot)
+    db.collection("registros_tel").document(tel_norm).set(
+        {"ativo": False}, merge=True
+    )
+    return {"ok": True}
+
+
+# ─────────────────────────────────────────────
+# CHAT IA (mesma lógica do bot WhatsApp)
+# ─────────────────────────────────────────────
+@mobile_router.post("/chat")
+def chat_ia(body: ChatInput, user=Depends(_get_user)):
+    """Endpoint de chat que usa a mesma IA do bot WhatsApp.
+    O identificador de conversa é web_{fazenda_id} para manter estado de sessão."""
+    if not body.mensagem.strip():
+        raise HTTPException(400, "Mensagem vazia")
+
+    fazenda_id = user.get("fazenda_id", "default")
+    permissoes = user.get("permissoes", ["admin"])
+    # Identificador único por sessão web (mantém estado de conversa)
+    tel_web    = f"web_{fazenda_id}"
+
+    try:
+        from whatsapp_bot import _processar
+        resposta = _processar(tel_web, body.mensagem.strip(), fazenda_id, permissoes)
+        return {"resposta": resposta or "✅ Feito!"}
+    except Exception as e:
+        import traceback
+        return {"resposta": f"Erro interno: {str(e)[:120]}"}
 
 @mobile_router.patch("/estoque/{item_id}")
 def atualizar_estoque(item_id: str, body: EstoqueInput, user=Depends(_get_user)):
@@ -1420,3 +1517,140 @@ def relatorio_mensal(user=Depends(_get_user), mes: str = Query(default="")):
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ─────────────────────────────────────────────
+# NUTRIÇÃO — Motor Nutricional
+# ─────────────────────────────────────────────
+class RacaoInput(BaseModel):
+    ingredientes: list  # [{"nome": str, "kg": float}]
+
+@mobile_router.get("/nutricao/insumos")
+def listar_insumos(user=Depends(_get_user)):
+    """Retorna a lista completa de insumos agrupados por categoria."""
+    from nutricao import listar_insumos_por_categoria
+    return listar_insumos_por_categoria()
+
+@mobile_router.post("/nutricao/calcular")
+def calcular_racao(body: RacaoInput, user=Depends(_get_user)):
+    """Calcula a tabela nutricional de uma ração pela média ponderada."""
+    from nutricao import calcular_racao as _calc
+    return _calc(body.ingredientes)
+
+@mobile_router.get("/nutricao/buscar")
+def buscar_insumo(termo: str, user=Depends(_get_user)):
+    """Desambiguação: retorna os insumos que correspondem ao termo."""
+    from nutricao import buscar_insumo as _buscar
+    return _buscar(termo)
+
+@mobile_router.get("/nutricao/racoes")
+def listar_racoes_salvas(user=Depends(_get_user)):
+    """Retorna as fórmulas de ração salvas da fazenda."""
+    fid  = user["fazenda_id"]
+    docs = [{"id": d.id, **d.to_dict()}
+            for d in _coll(fid, "racoes").stream()]
+    return sorted(docs, key=lambda x: x.get("criado_em", ""), reverse=True)
+
+@mobile_router.post("/nutricao/racoes")
+def salvar_racao(body: dict, user=Depends(_get_user)):
+    """Salva uma fórmula de ração com seus nutrientes calculados."""
+    from nutricao import calcular_racao as _calc
+    fid  = user["fazenda_id"]
+    ingredientes = body.get("ingredientes", [])
+    nome  = body.get("nome", "Ração sem nome")
+    calc  = _calc(ingredientes)
+    doc   = {
+        "nome":        nome,
+        "ingredientes": ingredientes,
+        "nutrientes":  calc.get("nutrientes", {}),
+        "nutrientes_ms": calc.get("nutrientes_ms", {}),
+        "total_kg":    calc.get("total_kg", 0),
+        "criado_em":   datetime.datetime.now().isoformat(),
+        "criado_por":  user.get("nome", ""),
+    }
+    _, ref = _coll(fid, "racoes").add(doc)
+    notify_update(fid, "nutricao")
+    return {"id": ref.id, **doc}
+
+@mobile_router.delete("/nutricao/racoes/{racao_id}")
+def deletar_racao(racao_id: str, user=Depends(_get_user)):
+    fid = user["fazenda_id"]
+    _coll(fid, "racoes").document(racao_id).delete()
+    return {"ok": True}
+
+
+# ─────────────────────────────────────────────
+# RANKINGS AVANÇADOS (3 rankings)
+# ─────────────────────────────────────────────
+@mobile_router.get("/rankings")
+def rankings_avancados(dias: int = 30, user=Depends(_get_user)):
+    """Retorna 3 rankings: produção, rentabilidade e alerta de descarte."""
+    fid = user["fazenda_id"]
+    ini = (datetime.date.today() - datetime.timedelta(days=dias)).isoformat()
+
+    config = {}
+    for d in _coll(fid, "config").stream():
+        c = d.to_dict()
+        config[c.get("chave", d.id)] = c.get("valor")
+
+    preco_leite    = float(config.get("preco_leite", 2.50))
+    custo_racao_kg = _custo_racao_kg_real(fid)
+
+    # Coleta produção e sanitário
+    prod_docs = [d.to_dict() for d in
+                 _coll(fid, "producao")
+                 .where(filter=FieldFilter("data", ">=", ini)).stream()]
+    san_docs  = [d.to_dict() for d in
+                 _coll(fid, "sanitario")
+                 .where(filter=FieldFilter("data", ">=", ini)).stream()]
+
+    # Agrega por animal
+    por_animal: dict = {}
+    for p in prod_docs:
+        nome = p.get("nome_animal") or "Rebanho"
+        if nome not in por_animal:
+            por_animal[nome] = {"litros": 0.0, "racao_kg": 0.0, "custo_vet": 0.0, "registros": 0}
+        por_animal[nome]["litros"]    += float(p.get("leite", 0) or 0)
+        por_animal[nome]["racao_kg"]  += float(p.get("racao", 0) or 0)
+        por_animal[nome]["registros"] += 1
+    for s in san_docs:
+        nome = s.get("nome_animal") or s.get("animal") or "Rebanho"
+        if nome in por_animal:
+            por_animal[nome]["custo_vet"] += float(s.get("valor", 0) or 0)
+
+    lista = []
+    for nome, d in por_animal.items():
+        litros = d["litros"]
+        if litros <= 0:
+            continue
+        receita     = litros * preco_leite
+        custo_racao = d["racao_kg"] * custo_racao_kg
+        custo_total = custo_racao + d["custo_vet"]
+        lucro       = receita - custo_total
+        custo_litro = custo_total / litros if litros > 0 else 0
+        margem_pct  = (lucro / receita * 100) if receita > 0 else 0
+        media_dia   = litros / dias
+
+        lista.append({
+            "nome":        nome,
+            "litros":      round(litros, 1),
+            "media_dia":   round(media_dia, 1),
+            "racao_kg":    round(d["racao_kg"], 1),
+            "receita":     round(receita, 2),
+            "custo_racao": round(custo_racao, 2),
+            "custo_vet":   round(d["custo_vet"], 2),
+            "custo_total": round(custo_total, 2),
+            "lucro":       round(lucro, 2),
+            "custo_litro": round(custo_litro, 3),
+            "margem_pct":  round(margem_pct, 1),
+        })
+
+    return {
+        "dias":             dias,
+        "preco_leite":      preco_leite,
+        "custo_racao_kg":   round(custo_racao_kg, 2),
+        "total_animais":    len(lista),
+        "producao":         sorted(lista, key=lambda x: x["litros"], reverse=True),
+        "rentabilidade":    sorted(lista, key=lambda x: x["custo_litro"]),
+        "alerta_descarte":  sorted(lista, key=lambda x: x["margem_pct"]),
+    }

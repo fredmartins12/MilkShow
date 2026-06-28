@@ -1,15 +1,54 @@
+# Credenciais — NUNCA commitar
 firebase_key.json
+*firebase*.json
+service_account*.json
 .streamlit/secrets.toml
-__pycache__/
-*.pyc
 .env
-bot_log.txt
-.claude/
+.env.*
+!.env.example
 deploy/.env
 deploy/evolution.env
 *.key
 *.pem
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+
+# Node / Frontend
+mobile/node_modules/
+mobile/dist/
+mobile/.vite/
+
+# Logs e runtime
+bot_log.txt
+*.log
 .playwright-mcp/
+
+# Mídia (não versionar binários)
 *.png
 *.jpg
-.pytest_cache/
+*.jpeg
+*.gif
+*.mp4
+
+# Claude
+.claude/
+
+# Android (gerado pelo Capacitor — não versionar)
+mobile/android/
+
+# Conteúdo pesado / não-código
+concorrentes/
+docs/dados/
+docs/relatorios/
+docs/pitch/
+docs/manual/
+docs/manual_beta.html
+docs/458848412-*.pdf
+assets/

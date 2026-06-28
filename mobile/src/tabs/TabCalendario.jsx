@@ -10,7 +10,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { CalendarDays, Baby, ShieldCheck, Milk, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react'
 import { api } from '../api.js'
-import { Loading, ErrorMsg, T } from '../ui.jsx'
+import { Loading, ErrorMsg, Empty, T } from '../ui.jsx'
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 function addDays(dateStr, n) {
@@ -38,7 +38,7 @@ function nomeMes(mes0) {
 
 // ─── TIPOS DE EVENTO ─────────────────────────────────────────────────────────
 const TIPOS = {
-  parto:    { label: 'Parto esperado',  Icon: Baby,         cor: '#3b82f6', bg: 'rgba(59,130,246,0.10)', border: 'rgba(59,130,246,0.25)' },
+  parto:    { label: 'Parto esperado',  Icon: Baby,         cor: '#22c55e', bg: 'rgba(59,130,246,0.10)', border: 'rgba(59,130,246,0.25)' },
   sanitario:{ label: 'Protocolo sanit.',Icon: ShieldCheck,  cor: '#f59e0b', bg: 'rgba(245,158,11,0.10)', border: 'rgba(245,158,11,0.25)' },
   secagem:  { label: 'Secagem prevista',Icon: Milk,         cor: '#a78bfa', bg: 'rgba(167,139,250,0.10)',border: 'rgba(167,139,250,0.25)' },
 }
@@ -75,17 +75,17 @@ function EventoCard({ evento }) {
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="text-sm font-semibold text-slate-200 truncate">{evento.titulo}</p>
-            <p className="text-[11px] font-mono mt-0.5" style={{ color: t.cor }}>{t.label}</p>
+            <p className="text-[11px] font-medium mt-0.5" style={{ color: t.cor }}>{t.label}</p>
           </div>
           <div className="text-right shrink-0">
-            <p className="text-xs font-mono text-slate-400 tabular-nums">{fmtData(evento.data)}</p>
-            <p className="text-[11px] font-mono mt-0.5 tabular-nums" style={{ color: urgCor }}>
+            <p className="text-xs text-slate-400 font-medium tabular-nums">{fmtData(evento.data)}</p>
+            <p className="text-[11px] font-medium mt-0.5" style={{ color: urgCor }}>
               {urgenciaLabel(diff)}
             </p>
           </div>
         </div>
         {evento.descricao && (
-          <p className="text-[11px] font-mono text-slate-500 mt-1.5 truncate">{evento.descricao}</p>
+          <p className="text-[11px] text-slate-500 mt-1.5 truncate">{evento.descricao}</p>
         )}
       </div>
     </div>
@@ -136,7 +136,7 @@ function MiniCalendar({ ano, mes, eventos, onMes }) {
       <div className="grid grid-cols-7 text-center"
            style={{ borderBottom: `1px solid ${T.border}` }}>
         {['D','S','T','Q','Q','S','S'].map((d, i) => (
-          <div key={i} className="py-2 text-[10px] font-mono text-slate-700 uppercase">{d}</div>
+          <div key={i} className="py-2 text-[11px] font-medium text-slate-500 uppercase">{d}</div>
         ))}
       </div>
 
@@ -149,7 +149,7 @@ function MiniCalendar({ ano, mes, eventos, onMes }) {
           const evs     = eventosDias[dia] || []
           return (
             <div key={i} className="flex flex-col items-center py-2 gap-1">
-              <span className="w-7 h-7 flex items-center justify-center rounded-full text-xs font-mono font-medium"
+              <span className="w-7 h-7 flex items-center justify-center rounded-full text-xs font-medium"
                     style={{
                       background: ehHoje ? '#16a34a' : 'transparent',
                       color:      ehHoje ? '#fff' : evs.length > 0 ? '#f1f5f9' : '#475569',
@@ -174,7 +174,7 @@ function MiniCalendar({ ano, mes, eventos, onMes }) {
         {Object.entries(TIPOS).map(([key, t]) => (
           <div key={key} className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full" style={{ background: t.cor }} />
-            <span className="text-[10px] font-mono text-slate-600">{t.label.split(' ')[0]}</span>
+            <span className="text-[10px] text-slate-500">{t.label.split(' ')[0]}</span>
           </div>
         ))}
       </div>
@@ -203,6 +203,12 @@ export default function TabCalendario() {
   }
 
   useEffect(() => { carregar() }, [])
+
+  useEffect(() => {
+    const onRefresh = () => carregar()
+    window.addEventListener('milkshow:refresh', onRefresh)
+    return () => window.removeEventListener('milkshow:refresh', onRefresh)
+  }, [])
 
   // Gera eventos a partir dos dados
   const eventos = useMemo(() => {
@@ -272,14 +278,14 @@ export default function TabCalendario() {
       {/* Resumo */}
       <div className="grid grid-cols-3 shrink-0" style={{ borderBottom: `1px solid ${T.border}` }}>
         {[
-          { label: 'Esta semana', value: filtrados.filter(e => diffDias(e.data) >= 0 && diffDias(e.data) <= 7).length, cor: 'text-emerald-400' },
-          { label: 'Próx. 30 dias', value: proximos.length, cor: 'text-blue-400' },
-          { label: 'Pendentes',    value: vencidos.length,  cor: vencidos.length > 0 ? 'text-red-400' : 'text-slate-500' },
+          { label: 'ESTA SEMANA',  value: filtrados.filter(e => diffDias(e.data) >= 0 && diffDias(e.data) <= 7).length, accent: '#10b981' },
+          { label: 'PRÓX. 30 DIAS', value: proximos.length, accent: '#22c55e' },
+          { label: 'PENDENTES',    value: vencidos.length,  accent: vencidos.length > 0 ? '#ef4444' : '#64748b' },
         ].map((k, i, arr) => (
-          <div key={k.label} className="p-5"
-               style={{ borderRight: i < arr.length - 1 ? `1px solid ${T.border}` : 'none' }}>
-            <p className="text-[11px] font-mono uppercase tracking-widest text-slate-500 mb-2">{k.label}</p>
-            <p className={`text-2xl font-mono font-bold tabular-nums ${k.cor}`}>{k.value}</p>
+          <div key={k.label} className="p-5 pt-3 flex flex-col gap-1"
+               style={{ borderRight: i < arr.length - 1 ? `1px solid ${T.border}` : 'none', borderTop: `2px solid ${k.accent}` }}>
+            <p className="text-[11px] font-medium uppercase tracking-widest text-slate-500">{k.label}</p>
+            <p className="text-2xl font-mono font-bold tabular-nums" style={{ color: k.accent === '#64748b' ? '#f1f5f9' : k.accent }}>{k.value}</p>
           </div>
         ))}
       </div>
@@ -297,7 +303,7 @@ export default function TabCalendario() {
 
           {/* Filtros */}
           <div>
-            <p className="text-[11px] font-mono uppercase tracking-widest text-slate-500 mb-3">Filtrar por tipo</p>
+            <p className="text-[11px] font-medium uppercase tracking-widest text-slate-500 mb-3">Filtrar por tipo</p>
             <div className="space-y-1">
               <button onClick={() => setFiltro('todos')}
                 className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-all"
@@ -306,7 +312,7 @@ export default function TabCalendario() {
                   color: filtroTipo === 'todos' ? '#cbd5e1' : '#64748b',
                 }}>
                 <span>Todos os eventos</span>
-                <span className="font-mono tabular-nums">{eventos.length}</span>
+                <span className="tabular-nums font-medium">{eventos.length}</span>
               </button>
               {Object.entries(TIPOS).map(([key, t]) => (
                 <button key={key} onClick={() => setFiltro(filtroTipo === key ? 'todos' : key)}
@@ -317,7 +323,7 @@ export default function TabCalendario() {
                   }}>
                   <t.Icon size={13} />
                   <span className="flex-1 text-left">{t.label}</span>
-                  <span className="font-mono tabular-nums">
+                  <span className="tabular-nums font-medium">
                     {eventos.filter(e => e.tipo === key).length}
                   </span>
                 </button>
@@ -326,7 +332,7 @@ export default function TabCalendario() {
           </div>
 
           <button onClick={carregar}
-            className="flex items-center gap-2 text-xs font-mono text-slate-600 hover:text-slate-400 transition-colors">
+            className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-300 transition-colors">
             <RefreshCw size={12} /> Atualizar
           </button>
         </div>
@@ -356,7 +362,7 @@ export default function TabCalendario() {
               <section>
                 <div className="flex items-center gap-2 mb-3">
                   <span className="text-xs font-semibold text-red-400 uppercase tracking-widest">Pendentes / vencidos</span>
-                  <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-mono font-bold bg-red-500/20 text-red-400">
+                  <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-semibold tabular-nums bg-red-500/20 text-red-400">
                     {vencidos.length}
                   </span>
                 </div>
@@ -370,7 +376,7 @@ export default function TabCalendario() {
               <section>
                 <div className="flex items-center gap-2 mb-3">
                   <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Próximos 30 dias</span>
-                  <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-mono font-bold"
+                  <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-semibold tabular-nums"
                         style={{ background: '#1e293b', color: '#94a3b8' }}>
                     {proximos.length}
                   </span>
@@ -389,7 +395,7 @@ export default function TabCalendario() {
                 <div className="space-y-3">
                   {futuros.slice(0, 20).map((e, i) => <EventoCard key={i} evento={e} />)}
                   {futuros.length > 20 && (
-                    <p className="text-center text-xs font-mono text-slate-700 py-2">
+                    <p className="text-center text-xs text-slate-500 py-2">
                       +{futuros.length - 20} eventos futuros
                     </p>
                   )}
@@ -398,13 +404,12 @@ export default function TabCalendario() {
             )}
 
             {filtrados.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-20 gap-3">
-                <div className="w-12 h-12 rounded-full flex items-center justify-center"
-                     style={{ background: T.surface, border: `1px solid ${T.border}` }}>
-                  <CalendarDays size={18} className="text-slate-700" />
-                </div>
-                <p className="text-slate-600 text-xs font-mono">nenhum evento encontrado</p>
-              </div>
+              <Empty
+                icon={CalendarDays}
+                title="Nenhum evento neste mês"
+                msg="Partos, secagens e protocolos sanitários aparecerão aqui."
+                accentColor="#22c55e"
+              />
             )}
           </div>
         </div>

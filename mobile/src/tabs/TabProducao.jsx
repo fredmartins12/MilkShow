@@ -3,21 +3,21 @@ import {
   ComposedChart, Area, Line, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
-import { Plus, RefreshCw, Trash2, Download } from 'lucide-react'
+import { Plus, RefreshCw, Trash2, Download, Activity } from 'lucide-react'
 import { api } from '../api.js'
 import {
   Loading, ErrorMsg, Toast, Modal, SectionHeader,
-  Field, Input, Select, Btn, T, hoje, ChartControls, csvDownload,
+  Field, Input, Select, Btn, Empty, T, hoje, ChartControls, csvDownload,
 } from '../ui.jsx'
 
 const TURNOS = ['manhã', 'tarde', 'noite']
-const COLOR  = '#3b82f6'
+const COLOR  = '#22c55e'
 
 function ChartTip({ active, payload, label }) {
   if (!active || !payload?.length) return null
   return (
     <div style={{ background: T.surface, border: `1px solid ${T.border}` }}
-         className="rounded px-3 py-2 text-[11px]">
+         className="rounded-xl px-3 py-2.5 text-[11px] shadow-lg">
       <p className="text-slate-500 font-mono mb-1">{label}</p>
       <p className="font-mono font-semibold tabular-nums" style={{ color: COLOR }}>
         {payload[0]?.value} L
@@ -27,7 +27,7 @@ function ChartTip({ active, payload, label }) {
 }
 
 function ProdChart({ data, tipo }) {
-  const tick = { fill: '#475569', fontSize: 10, fontFamily: 'monospace' }
+  const tick = { fill: '#475569', fontSize: 10, fontFamily: 'var(--font-sans)' }
   const grid = <CartesianGrid strokeDasharray="2 4" stroke={T.border} />
   const x    = <XAxis dataKey="dia" tick={tick} />
   const y    = <YAxis tick={tick} />
@@ -100,6 +100,12 @@ export default function TabProducao() {
 
   useEffect(() => { carregar(periodo) }, [periodo])
 
+  useEffect(() => {
+    const onRefresh = () => carregar(periodo)
+    window.addEventListener('milkshow:refresh', onRefresh)
+    return () => window.removeEventListener('milkshow:refresh', onRefresh)
+  }, [periodo])
+
   function setAnimal(id) {
     const a = animais.find(x => (x.id || x.nome) === id)
     setForm(f => ({ ...f, id_animal: a?.id || id, nome_animal: a?.nome || id }))
@@ -157,21 +163,21 @@ export default function TabProducao() {
       {/* Sumário */}
       <div className="grid grid-cols-4 shrink-0" style={{ borderBottom: `1px solid ${T.border}` }}>
         {[
-          { label: `TOTAL ${periodo}D`,   value: `${totalPeriodo.toFixed(0)} L` },
-          { label: 'MÉDIA DIÁRIA',        value: `${mediaDia.toFixed(1)} L` },
-          { label: 'ANIMAIS LACT.',       value: `${animais.length}` },
-          { label: 'REGISTROS',           value: `${registros.length}` },
+          { label: `TOTAL ${periodo}D`,   value: `${totalPeriodo.toFixed(0)} L`, accent: '#22c55e' },
+          { label: 'MÉDIA DIÁRIA',        value: `${mediaDia.toFixed(1)} L`,     accent: '#22c55e' },
+          { label: 'ANIMAIS LACT.',       value: `${animais.length}`,            accent: '#16a34a' },
+          { label: 'REGISTROS',           value: `${registros.length}`,          accent: '#64748b' },
         ].map((k, i, arr) => (
-          <div key={k.label} className="p-4"
-               style={{ borderRight: i < arr.length - 1 ? `1px solid ${T.border}` : '' }}>
-            <p className="text-[10px] font-mono uppercase tracking-widest text-slate-600 mb-2">{k.label}</p>
-            <p className="text-2xl font-mono font-semibold tabular-nums text-slate-100">{k.value}</p>
+          <div key={k.label} className="p-4 pt-3 flex flex-col gap-1"
+               style={{ borderRight: i < arr.length - 1 ? `1px solid ${T.border}` : '', borderTop: `2px solid ${k.accent}` }}>
+            <p className="text-[11px] font-medium uppercase tracking-widest text-slate-500">{k.label}</p>
+            <p className="text-2xl font-semibold tabular-nums font-mono" style={{ color: k.accent === '#64748b' ? '#f1f5f9' : k.accent }}>{k.value}</p>
           </div>
         ))}
       </div>
 
       {/* Gráfico */}
-      <div className="px-5 pt-4 pb-3 shrink-0 space-y-3" style={{ borderBottom: `1px solid ${T.border}` }}>
+      <div className="px-5 pt-4 pb-4 shrink-0 space-y-3" style={{ borderBottom: `1px solid ${T.border}`, background: T.s2 }}>
         <ChartControls
           periodo={periodo} setPeriodo={setPeriodo}
           tipo={tipo}       setTipo={setTipo}
@@ -203,11 +209,20 @@ export default function TabProducao() {
 
       {/* Tabela */}
       <div className="overflow-auto flex-1">
-        <table className="w-full text-xs font-mono">
+        {registros.length === 0 ? (
+          <Empty
+            icon={Activity}
+            title="Nenhum registro de produção"
+            msg={`Sem ordenhas nos últimos ${periodo} dias.`}
+            accentColor="#22c55e"
+            action={<Btn variant="primary" size="sm" onClick={abrirModal}><Plus size={12} /> Registrar ordenha</Btn>}
+          />
+        ) : (
+        <table className="w-full text-xs">
           <thead>
-            <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+            <tr style={{ background: T.s3, borderBottom: `1px solid ${T.border}` }}>
               {['DATA', 'ANIMAL', 'TURNO', 'LEITE', 'RAÇÃO', 'OBS', ''].map(h =>
-                <th key={h} className="text-left text-slate-700 px-4 py-2 font-normal tracking-wider text-[10px]">{h}</th>
+                <th key={h} className="text-left text-slate-500 px-4 py-2.5 font-medium text-[11px] tracking-wider uppercase">{h}</th>
               )}
             </tr>
           </thead>
@@ -234,6 +249,7 @@ export default function TabProducao() {
             ))}
           </tbody>
         </table>
+        )}
       </div>
 
       {/* Confirm delete */}

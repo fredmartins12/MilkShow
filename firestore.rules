@@ -1,0 +1,40 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Dados por fazenda (multi-tenant) ─────────────────────────────────────
+    // Apenas usuários autenticados cujo token contenha o fazenda_id correto
+    // podem ler/escrever dados da fazenda.
+    match /fazendas/{fazenda_id}/{document=**} {
+      allow read, write: if
+        request.auth != null &&
+        (
+          request.auth.uid == fazenda_id ||
+          request.auth.token.fazenda_id == fazenda_id
+        );
+    }
+
+    // ── Perfis de usuário ─────────────────────────────────────────────────────
+    // Cada usuário lê/escreve apenas o próprio documento.
+    match /users/{uid} {
+      allow read, write: if
+        request.auth != null &&
+        request.auth.uid == uid;
+    }
+
+    // ── Convites ─────────────────────────────────────────────────────────────
+    // Qualquer usuário autenticado pode ler um convite (para validar o código),
+    // mas só admins da fazenda podem criar/deletar.
+    match /convites/{convite_id} {
+      allow read: if request.auth != null;
+      allow write: if
+        request.auth != null &&
+        request.auth.token.permissoes.hasAny(['admin']);
+    }
+
+    // ── Bloqueia tudo mais ────────────────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
