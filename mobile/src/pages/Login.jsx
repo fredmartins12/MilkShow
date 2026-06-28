@@ -15,17 +15,21 @@ const BRAND2 = '#16a34a'
 
 function traduzirErro(code) {
   const map = {
-    'auth/invalid-email':        'E-mail inválido.',
-    'auth/user-not-found':       'Usuário não encontrado.',
-    'auth/wrong-password':       'Senha incorreta.',
-    'auth/invalid-credential':   'E-mail ou senha incorretos.',
-    'auth/too-many-requests':    'Muitas tentativas. Tente mais tarde.',
-    'auth/email-already-in-use': 'Este e-mail já está cadastrado.',
-    'auth/weak-password':        'Senha fraca. Mínimo 6 caracteres.',
+    'auth/invalid-email':          'E-mail inválido.',
+    'auth/user-not-found':         'Usuário não encontrado.',
+    'auth/wrong-password':         'Senha incorreta.',
+    'auth/invalid-credential':     'E-mail ou senha incorretos.',
+    'auth/too-many-requests':      'Muitas tentativas. Tente mais tarde.',
+    'auth/email-already-in-use':   'Este e-mail já está cadastrado.',
+    'auth/weak-password':          'Senha fraca. Mínimo 6 caracteres.',
     'auth/network-request-failed': 'Sem conexão. Verifique sua internet.',
-    'auth/popup-closed-by-user': 'Login cancelado.',
+    'auth/popup-closed-by-user':   'Login cancelado.',
+    'auth/user-disabled':          'Conta desativada. Entre em contato com o suporte.',
+    'auth/operation-not-allowed':  'Método de login não permitido.',
+    'auth/requires-recent-login':  'Faça login novamente para continuar.',
+    'auth/timeout':                'Tempo esgotado. Tente novamente.',
   }
-  return map[code] || 'Erro inesperado. Tente novamente.'
+  return map[code] || null  // null = não conhece o código, mostra mensagem do servidor
 }
 
 function salvarSessao(data) {
@@ -59,7 +63,9 @@ export default function Login() {
       salvarSessao(data)
       nav('/', { replace: true })
     } catch(err) {
-      setErro(traduzirErro(err.code) || err.message)
+      const msgTraduzida = traduzirErro(err.code)
+      const msgServidor  = err.message?.replace('Erro na requisição', '').trim()
+      setErro(msgTraduzida || msgServidor || 'Erro inesperado. Tente novamente.')
     } finally { setLoading(false) }
   }
 

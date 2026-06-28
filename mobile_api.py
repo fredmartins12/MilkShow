@@ -344,7 +344,7 @@ def google_login(body: GoogleLoginRequest):
         'permissoes': permissoes,
         'exp':        exp.timestamp(),
     })
-    return {'token': token, 'nome': nome, 'fazenda_id': fazenda_id}
+    return {'token': token, 'nome': nome, 'email': email, 'fazenda_id': fazenda_id}
 
 
 @mobile_router.post("/auth/set-pin")
