@@ -1,9 +1,7 @@
 name: Deploy MilkShow
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+  workflow_dispatch:  # apenas manual — deploy automático desativado para evitar aninhamento do dist
 
 jobs:
   deploy:
