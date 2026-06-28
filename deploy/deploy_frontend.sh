@@ -22,10 +22,9 @@ cd "$MOBILE_DIR"
 npm run build
 echo "   Build OK → dist/ gerado"
 
-# 2. Empacotar em tar (evita estrutura aninhada do scp -r)
+# 2. Empacotar em tar com -C (não usa cd — evita bug de path com caracteres especiais)
 echo "[2/3] Empacotando..."
-cd "$MOBILE_DIR/dist"
-tar czf /tmp/milkshow_dist.tar.gz .
+tar czf /tmp/milkshow_dist.tar.gz -C "$MOBILE_DIR/dist" .
 echo "   Pacote: $(du -sh /tmp/milkshow_dist.tar.gz | cut -f1)"
 
 # 3. Enviar e extrair no servidor
