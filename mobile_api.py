@@ -303,6 +303,7 @@ class GoogleLoginRequest(BaseModel):
 @mobile_router.post("/auth/google")
 def google_login(body: GoogleLoginRequest):
     """Login via Google (Firebase ID token). Cria fazenda se for primeiro acesso."""
+    _db()  # garante que o Firebase Admin está inicializado antes de chamar auth
     from firebase_admin import auth as fb_auth
     try:
         decoded = fb_auth.verify_id_token(body.id_token)
