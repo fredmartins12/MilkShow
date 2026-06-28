@@ -9,11 +9,19 @@ User=root
 WorkingDirectory=/opt/milkshow
 EnvironmentFile=/opt/milkshow/.env
 
+# Libera a porta 8000 antes de iniciar (evita "address already in use")
+ExecStartPre=/bin/bash -c 'fuser -k 8000/tcp 2>/dev/null; sleep 1; exit 0'
+
 ExecStart=/opt/milkshow/venv/bin/uvicorn whatsapp_bot:app \
     --host 0.0.0.0 \
     --port 8000 \
-    --workers 2 \
+    --workers 1 \
     --log-level info
+
+# Garante que TODOS os processos filhos sejam mortos no stop
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=10
 
 Restart=always
 RestartSec=5
