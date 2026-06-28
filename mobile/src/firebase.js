@@ -6,6 +6,7 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
+  signOut as firebaseSignOut,
 } from 'firebase/auth'
 
 const firebaseConfig = {
@@ -39,4 +40,9 @@ export async function createAccountWithEmail(email, password) {
 /** Envia email de redefinição de senha */
 export async function resetPassword(email) {
   await sendPasswordResetEmail(auth, email)
+}
+
+/** Logout do Firebase */
+export async function signOut() {
+  await firebaseSignOut(auth)
 }

@@ -373,16 +373,18 @@ def dashboard(user=Depends(_get_user)):
     ultimo_dia_mes_ant = primeiro_dia_mes - datetime.timedelta(days=1)
     ini_mes_ant = ultimo_dia_mes_ant.replace(day=1)
 
-    # Produção: busca 14 dias de uma vez para calcular hoje + ontem + semana atual + semana anterior
+    # Produção: busca desde o início do mês (cobre 14 dias e litros_mes ao mesmo tempo)
+    ini_query = min(ini_14, ini_m)
     prod_14d = [d.to_dict() for d in
                 _coll(fid, "producao")
-                .where(filter=FieldFilter("data", ">=", ini_14.isoformat())).stream()]
+                .where(filter=FieldFilter("data", ">=", ini_query.isoformat())).stream()]
 
     litros_hoje      = sum(p.get("leite", 0) for p in prod_14d if p.get("data") == hoje.isoformat())
     litros_ontem     = sum(p.get("leite", 0) for p in prod_14d if p.get("data") == ontem.isoformat())
     litros_7d        = sum(p.get("leite", 0) for p in prod_14d if p.get("data", "") >= ini_7.isoformat())
     litros_semana_ant= sum(p.get("leite", 0) for p in prod_14d
                            if ini_14.isoformat() <= p.get("data", "") < ini_7.isoformat())
+    litros_mes       = sum(p.get("leite", 0) for p in prod_14d if p.get("data", "") >= ini_m.isoformat())
 
     prod_hoje_docs   = [p for p in prod_14d if p.get("data") == hoje.isoformat()]
     ordenhadas_hoje  = len({p.get("id_animal") for p in prod_hoje_docs})
@@ -438,6 +440,7 @@ def dashboard(user=Depends(_get_user)):
             "media_dia":         round(litros_7d / 7, 1),
         },
         "mes": {
+            "litros_mes":        round(litros_mes, 1),
             "receitas":          round(receitas, 2),
             "despesas":          round(despesas, 2),
             "saldo":             round(receitas - despesas, 2),
