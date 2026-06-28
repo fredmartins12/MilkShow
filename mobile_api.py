@@ -28,6 +28,11 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
+# Inicializa Firebase Admin uma única vez no carregamento do módulo
+if not firebase_admin._apps:
+    _fb_key = os.path.join(os.path.dirname(__file__), "firebase_key.json")
+    firebase_admin.initialize_app(credentials.Certificate(_fb_key))
+
 mobile_router = APIRouter(prefix="/api/v1", tags=["mobile"])
 
 # ─────────────────────────────────────────────
@@ -129,10 +134,6 @@ def _jwt_decode(token: str) -> Optional[dict]:
 # Firebase helper
 # ─────────────────────────────────────────────
 def _db():
-    if not firebase_admin._apps:
-        key_file = os.path.join(os.path.dirname(__file__), "firebase_key.json")
-        cred = credentials.Certificate(key_file)
-        firebase_admin.initialize_app(cred)
     return firestore.client()
 
 def _coll(fazenda_id: str, nome: str):
@@ -303,7 +304,6 @@ class GoogleLoginRequest(BaseModel):
 @mobile_router.post("/auth/google")
 def google_login(body: GoogleLoginRequest):
     """Login via Google (Firebase ID token). Cria fazenda se for primeiro acesso."""
-    _db()  # garante que o Firebase Admin está inicializado antes de chamar auth
     from firebase_admin import auth as fb_auth
     try:
         decoded = fb_auth.verify_id_token(body.id_token)
