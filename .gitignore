@@ -40,6 +40,10 @@ bot_log.txt
 # Claude
 .claude/
 
+# Respostas de API / arquivos temporários de extração
+cqbal_*_response.json
+*_response.json
+
 # Android (gerado pelo Capacitor — não versionar)
 mobile/android/
 
