@@ -57,7 +57,7 @@ function ItemCard({ item, onEdit, onDelete }) {
         <div>
           <p className="text-[11px] text-slate-500 mb-0.5">Quantidade</p>
           <p className="text-2xl font-mono font-bold tabular-nums"
-             style={{ color: zero ? '#ef4444' : baixo ? '#f59e0b' : '#f1f5f9' }}>
+             style={{ color: zero ? '#ef4444' : baixo ? '#f59e0b' : T.text }}>
             {Number(item.qtd).toLocaleString('pt-BR')}
             <span className="text-slate-600 text-sm font-normal ml-1">{item.un}</span>
           </p>
