@@ -1,65 +1,159 @@
-🐮 MilkShow - Gestão Leiteira Enterprise
+# MilkShow — Gestão Leiteira Enterprise
 
-O MilkShow é uma solução completa de gestão para propriedades leiteiras, desenvolvida para transformar dados do campo em decisões estratégicas. O sistema opera 100% na nuvem, integrando controle zootécnico, financeiro e de estoque em uma interface ágil e visual.
+> **SaaS B2B para propriedades leiteiras.** PWA mobile-first para operação em campo + dashboard web gerencial, com bot WhatsApp integrado para registro por voz e texto.
 
-🚀 Funcionalidades Principais
+🌐 **Produção:** [milshow.com.br/app](https://milshow.com.br/app/)
 
-O sistema é dividido em módulos estratégicos:
+---
 
-📊 BI & Inteligência: Dashboards com KPIs de Custo/Litro, Margem de Lucro, Preço Médio Realizado e Curvas de Produção.
+## Stack
 
-🧬 Veterinária & Reprodução: "Robô Veterinário" que gera alertas automáticos para diagnósticos, inseminação, secagem e partos previstos.
+| Camada | Tecnologia |
+|--------|-----------|
+| Frontend / PWA | React 19 + Vite 8 + Tailwind CSS v4 |
+| Backend | Python 3.12 + FastAPI |
+| Banco de dados | Firebase Firestore (multi-tenant) |
+| Bot WhatsApp | Evolution API / Z-API / Twilio |
+| IA | Groq Whisper + Gemini 2.0 Flash + Claude Haiku |
+| Infra | VPS Ubuntu, nginx, systemd, Let's Encrypt |
 
-💰 Financeiro 360: Fluxo de caixa com regime de competência (vínculo de receita de leite por período de produção) e relatórios de margem por animal.
+---
 
-📦 Armazém Avançado: Controle de estoque com cálculo automático de preço médio ponderado e baixa de insumos.
+## Funcionalidades
 
-👶 Berçário: Gestão completa de bezerros, colostragem e desmame.
+### 📊 Dashboard BI
+KPIs de produção (litros/dia, média diária), margem operacional, custo/litro, composição do rebanho, alertas automáticos e tarefas sanitárias.
 
-📅 Calendário Visual: Agenda de manejo inteligente integrada automaticamente aos eventos do rebanho.
+### 🐄 Rebanho
+Cadastro completo de animais com histórico de produção, status reprodutivo, curva de lactação e prontuário individual.
 
-🐄 Rebanho Cloud: Cadastro unificado com filtros avançados e histórico na nuvem.
+### 🥛 Produção
+Registro de ordenhas por turno (manhã/tarde), histórico de 90 dias, gráficos por animal e exportação CSV.
 
-🛠️ Tecnologias Utilizadas
+### 💰 Financeiro
+Fluxo de caixa com receitas e despesas, saldo do período, gráfico receita vs. despesa e categorização por centro de custo.
 
-Frontend/Backend: Streamlit (Python)
+### 📦 Armazém
+Controle de estoque de ração, medicamentos e insumos com alertas de estoque mínimo.
 
-Banco de Dados: Google Firebase (Firestore) - NoSQL em Tempo Real
+### 🏥 Sanidade & Veterinária
+Protocolos sanitários (vacinas, exames, tratamentos, secagem, desmame, colostragem) com calendário de manejo.
 
-Análise de Dados: Pandas & Plotly
+### 👶 Berçário
+Gestão de bezerros e novilhas, controle de colostragem e alertas de desmame.
 
-Infraestrutura: Cloud-Ready (Deploy contínuo)
+### 🌿 Nutrição
+Formulação de rações com base no banco nutricional CQBAL 4.0 (Embrapa/UFV) — 56+ ingredientes com PB, FDN, NDT, EM, Ca, P.
 
-📦 Instalação e Execução Local
+### 🤖 Bot WhatsApp
+Registro de ordenhas, consultas e alertas diretamente pelo WhatsApp do produtor — por texto ou áudio transcrito via IA.
 
-Clone o repositório:
+---
 
-git clone [https://github.com/seu-usuario/MilkShow.git](https://github.com/seu-usuario/MilkShow.git)
-cd MilkShow
+## Estrutura do Projeto
 
+```
+MilkShow/
+├── mobile/                 # Frontend React PWA
+│   └── src/
+│       ├── tabs/           # TabBI, TabProducao, TabRebanho, TabFinanceiro…
+│       ├── pages/          # Login, etc.
+│       ├── ui.jsx          # Design system + tokens
+│       └── api.js          # Chamadas para o backend
+├── mobile_api.py           # FastAPI — rotas /api/v1/*
+├── whatsapp_bot.py         # Bot WhatsApp + servidor principal
+├── nutricao.py             # Motor de formulação de rações
+├── deploy/
+│   ├── deploy_frontend.sh  # Build + envio via tar/SSH
+│   ├── milkshow-bot.service
+│   └── nginx.conf
+└── docs/
+    ├── ingredientes_nutricionais.sql   # Banco nutricional (56 ingredientes)
+    └── ingredientes_nutricionais.json
+```
 
-Crie um ambiente virtual e instale as dependências:
+---
 
-python -m venv venv
-# Windows:
-.\venv\Scripts\activate
-# Linux/Mac:
-source venv/bin/activate
+## Desenvolvimento Local
 
-pip install -r requirements.txt
+### Frontend
 
+```bash
+cd mobile
+npm install
+npm run dev
+# Acesse: http://localhost:5173/app/
+```
 
-Configure a chave do Firebase:
+### Backend
 
-Adicione seu arquivo firebase_key.json na raiz do projeto.
+```bash
+# Requer Python 3.12+ e arquivo .env com credenciais Firebase
+py -3 -m uvicorn whatsapp_bot:app --port 8000 --host 0.0.0.0 --reload
+```
 
-Execute a aplicação:
+### Variáveis de ambiente (`.env`)
 
-streamlit run gestor.py
+```env
+GOOGLE_APPLICATION_CREDENTIALS=./firebase_key.json
+FIREBASE_API_KEY=...
+BOT_ADMIN_TOKEN=...
+GROQ_API_KEY=...
+GEMINI_API_KEY=...
+```
 
+---
 
-☁️ Deploy (Streamlit Cloud)
+## Deploy
 
-Este projeto está configurado para deploy automático via Streamlit Community Cloud, utilizando Secrets para gerenciamento seguro das credenciais do Firebase.
+### Frontend
 
-Desenvolvido para modernizar o agronegócio. 🥛
+```bash
+bash deploy/deploy_frontend.sh
+```
+
+O script faz build, empacota em `.tar.gz` e envia via SSH para o servidor.
+
+### Backend
+
+```bash
+# No servidor (via SSH)
+cd /opt/milkshow && git pull origin main
+systemctl restart milkshow-bot
+```
+
+---
+
+## Arquitetura Multi-tenant
+
+Todos os dados são isolados por fazenda no Firestore:
+
+```
+fazendas/{fazenda_id}/
+  ├── animais/
+  ├── producao/
+  ├── sanitario/
+  ├── financeiro/
+  ├── estoque/
+  ├── racoes/
+  └── usuarios/
+```
+
+Nenhuma query acessa dados sem filtrar por `fazenda_id` extraído do JWT.
+
+---
+
+## Banco Nutricional
+
+O módulo de nutrição usa dados do **CQBAL 4.0** (Tabelas Brasileiras de Composição de Alimentos para Ruminantes — Embrapa/UFV) e da planilha **Embrapa Gado de Corte** (J.M. da Silva), totalizando **56 ingredientes** com:
+
+- Proteína Bruta (PB %), FDN %, NDT %, Energia Metabolizável (Mcal/kg), Ca %, P %
+- Degradabilidade ruminal da PB (Degr. PB %)
+
+Scripts de importação em `docs/ingredientes_nutricionais.sql` e `.json`.
+
+---
+
+## Licença
+
+Proprietário — © 2026 MilkShow. Todos os direitos reservados.
