@@ -204,6 +204,23 @@ export default function TabFinanceiro() {
         ))}
       </div>
 
+      {/* Filtro de período */}
+      <div className="flex items-center gap-2 px-5 py-2 shrink-0" style={{ borderBottom: `1px solid ${T.border}`, background: T.surface }}>
+        <span className="text-[11px] font-medium uppercase tracking-widest mr-1" style={{ color: T.muted }}>Período:</span>
+        {[7, 14, 30, 60, 90].map(p => (
+          <button key={p} onClick={() => setPeriodo(p)}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150"
+            style={{
+              background: periodo === p ? T.brand : T.s3,
+              color: periodo === p ? '#fff' : T.sub,
+              boxShadow: periodo === p ? '0 2px 8px rgba(34,197,94,0.35)' : 'none',
+              border: `1px solid ${periodo === p ? T.brand2 : T.border}`,
+            }}>
+            {p}d
+          </button>
+        ))}
+      </div>
+
       {/* Gráfico */}
       <div className="px-5 pt-4 pb-4 shrink-0 space-y-3" style={{ borderBottom: `1px solid ${T.border}`, background: T.s2 }}>
         <p className="text-[11px] font-medium uppercase tracking-widest text-slate-500">
@@ -257,16 +274,18 @@ export default function TabFinanceiro() {
           </thead>
           <tbody>
             {registros.slice(0, 150).map((r, i) => (
-              <tr key={r.id || i} className="hover:bg-white/[0.02] transition-colors"
-                  style={{ borderBottom: `1px solid ${T.border2}` }}>
+              <tr key={r.id || i} className="transition-colors hover:brightness-95"
+                  style={{ borderBottom: `1px solid ${T.border2}`, background: i % 2 === 0 ? T.surface : T.s2 }}>
                 <td className="px-4 py-2.5 text-slate-500">{r.data}</td>
-                <td className={`px-4 py-2.5 font-semibold uppercase tracking-wider text-[10px] ${r.tipo === 'receita' ? 'text-emerald-400' : 'text-red-400'}`}>
+                <td className="px-4 py-2.5 font-semibold uppercase tracking-wider text-[10px]"
+                    style={{ color: r.tipo === 'receita' ? T.brand : T.red }}>
                   {r.tipo}
                 </td>
                 <td className="px-4 py-2.5 text-slate-400">{r.categoria || '—'}</td>
                 <td className="px-4 py-2.5 text-slate-200 max-w-[180px] truncate">{r.descricao || '—'}</td>
-                <td className={`px-4 py-2.5 font-semibold tabular-nums ${r.tipo === 'receita' ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {r.tipo === 'despesa' ? '−' : ''}{fmtBRL(r.valor)}
+                <td className="px-4 py-2.5 font-semibold tabular-nums"
+                    style={{ color: r.tipo === 'receita' ? T.brand : T.red }}>
+                  {r.tipo === 'despesa' ? '−' : '+'}{fmtBRL(r.valor)}
                 </td>
                 <td className="px-4 py-2.5">
                   {r.id && (
@@ -287,6 +306,18 @@ export default function TabFinanceiro() {
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            <tr style={{ background: T.s3, borderTop: `2px solid ${T.border}` }}>
+              <td colSpan={4} className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Saldo do período
+              </td>
+              <td className="px-4 py-3 font-bold tabular-nums text-sm"
+                  style={{ color: saldo >= 0 ? T.brand : T.red }}>
+                {saldo >= 0 ? '+' : '−'}{fmtBRL(Math.abs(saldo))}
+              </td>
+              <td />
+            </tr>
+          </tfoot>
         </table>
         )}
       </div>

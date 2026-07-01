@@ -14,18 +14,18 @@ import {
   Clock, AlertCircle, Milk, Users, Wallet,
 } from 'lucide-react'
 import { api } from '../api.js'
-import { Loading, fmtBRL } from '../ui.jsx'
+import { Loading, Skeleton, fmtBRL, T } from '../ui.jsx'
 
-// ─── CORES ────────────────────────────────────────────────────────────────────
+// ─── CORES — aliases locais dos tokens do design system ──────────────────────
 const C = {
-  brand:  '#22c55e',
-  brand2: '#16a34a',
-  bg:     '#f1f4f1',
-  white:  '#ffffff',
-  border: '#e8ede8',
-  text:   '#1a2e1a',
-  sub:    '#4a6741',
-  muted:  '#8aaa85',
+  brand:  T.brand,
+  brand2: T.brand2,
+  bg:     T.bg,
+  white:  T.surface,
+  border: T.border,
+  text:   T.text,
+  sub:    T.sub,
+  muted:  T.muted,
 }
 
 // ─── KPI TILE — estilo Leigado (tooltip integrado) ───────────────────────────
@@ -36,7 +36,9 @@ function KpiTile({ label, value, unit, sub, gradient, Icon, delta, tooltip }) {
   const DIcon = delta == null ? null : isPos ? TrendingUp : isNeg ? TrendingDown : Minus
 
   return (
-    <div className="relative overflow-hidden flex flex-col flex-1"
+    <div className="relative overflow-hidden flex flex-col flex-1 transition-transform duration-150 hover:brightness-105 active:scale-[0.98]"
+         role="region"
+         aria-label={`${label}: ${value}${unit ? ' ' + unit : ''}`}
          style={{ background: gradient, minHeight: 180, padding: '22px 22px 20px', cursor: 'default' }}
          onMouseEnter={() => setShowTip(true)}
          onMouseLeave={() => setShowTip(false)}>
@@ -66,7 +68,7 @@ function KpiTile({ label, value, unit, sub, gradient, Icon, delta, tooltip }) {
 
       {/* Ícone decorativo */}
       {Icon && (
-        <Icon size={80} className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none"
+        <Icon size={80} aria-hidden="true" className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none"
               style={{ color: 'rgba(255,255,255,0.12)', strokeWidth: 1.1 }} />
       )}
 
@@ -107,7 +109,7 @@ function Gauge({ value = 0, max = 100, label, color = '#22c55e', tooltip }) {
 
   return (
     <div className="flex flex-col items-center gap-1 relative group">
-      <span className="text-[11px] font-semibold text-slate-500 text-center cursor-default">{label}</span>
+      <span className="text-[11px] font-semibold text-center cursor-default" style={{ color: T.sub }}>{label}</span>
       {/* Tooltip do gauge */}
       {tooltip && (
         <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 z-50 hidden group-hover:block pointer-events-none"
@@ -129,13 +131,13 @@ function Gauge({ value = 0, max = 100, label, color = '#22c55e', tooltip }) {
         )}
         {/* Texto central */}
         <text x={cx} y={cy + 6} textAnchor="middle"
-              style={{ fontSize: 18, fontWeight: 900, fill: C.text, fontFamily: 'Inter,sans-serif' }}>
+              style={{ fontSize: 18, fontWeight: 900, fill: T.text, fontFamily: 'Inter,sans-serif' }}>
           {value.toFixed(1)}%
         </text>
         <text x={cx - R - 2} y={cy + 20}
-              style={{ fontSize: 9, fill: C.muted, fontFamily: 'Inter,sans-serif' }}>0</text>
+              style={{ fontSize: 9, fill: T.muted, fontFamily: 'Inter,sans-serif' }}>0</text>
         <text x={cx + R - 10} y={cy + 20}
-              style={{ fontSize: 9, fill: C.muted, fontFamily: 'Inter,sans-serif' }}>{max}</text>
+              style={{ fontSize: 9, fill: T.muted, fontFamily: 'Inter,sans-serif' }}>{max}</text>
       </svg>
     </div>
   )
@@ -249,10 +251,10 @@ function TarefaItem({ icon: Icon, iconBg, iconColor, title, sub, date, badge, ba
   const atrasada = diasAte !== null && diasAte < 0
 
   return (
-    <div className="flex items-start gap-3 py-3 border-b last:border-0" style={{ borderColor: '#f0f4f0' }}>
-      <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
+    <div role="listitem" className="flex items-start gap-3 py-3 border-b last:border-0" style={{ borderColor: T.s2 }}>
+      <div className="w-11 h-11 rounded-full flex items-center justify-center shrink-0"
            style={{ background: iconBg }}>
-        <Icon size={16} style={{ color: iconColor }} />
+        <Icon size={17} style={{ color: iconColor }} />
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-[13px] font-semibold text-slate-700 truncate">{title}</p>
@@ -306,9 +308,9 @@ function AlertaBanner({ animais, sanitario, estoque, pendentes }) {
   }, [animais, sanitario, estoque, pendentes])
 
   if (alertas.length === 0) return (
-    <div className="flex items-center gap-2 px-5 py-2.5 bg-white shrink-0" style={{ borderBottom: '1px solid #e8ede8' }}>
-      <CheckCircle size={13} className="text-green-500 shrink-0" />
-      <span className="text-[12px] text-green-600 font-medium">Tudo em ordem — sem alertas hoje</span>
+    <div className="flex items-center gap-2 flex-1" role="status" aria-label="Sem alertas hoje">
+      <CheckCircle size={13} aria-hidden="true" style={{ color: T.brand }} className="shrink-0" />
+      <span className="text-[12px] font-medium" style={{ color: T.brand2 }}>Tudo em ordem — sem alertas hoje</span>
     </div>
   )
 
@@ -316,9 +318,10 @@ function AlertaBanner({ animais, sanitario, estoque, pendentes }) {
 
   return (
     <div className="flex items-center gap-3 px-5 py-2 bg-amber-50 shrink-0 overflow-x-auto"
+         role="status" aria-live="polite" aria-label={`${alertas.length} alerta${alertas.length > 1 ? 's' : ''} ativo${alertas.length > 1 ? 's' : ''}`}
          style={{ borderBottom: '1px solid #fde68a' }}>
       <div className="flex items-center gap-1.5 shrink-0">
-        <AlertTriangle size={13} className="text-amber-500" />
+        <AlertTriangle size={13} aria-hidden="true" className="text-amber-500" />
         <span className="text-[11px] font-bold text-amber-600">{alertas.length} alerta{alertas.length > 1 ? 's' : ''}</span>
       </div>
       <div className="flex gap-2 overflow-x-auto">
@@ -362,6 +365,7 @@ export default function TabBI() {
   const [erro,      setErro]      = useState('')
   const [pdfLoad,   setPdfLoad]   = useState(false)
   const [periodo,   setPeriodo]   = useState(14)
+  const [refreshing, setRefreshing] = useState(false)
 
   async function baixarPDF() {
     setPdfLoad(true)
@@ -393,6 +397,7 @@ export default function TabBI() {
 
   const carregar = useCallback(async (silente = false) => {
     if (!silente) { setLoading(true); setErro('') }
+    else setRefreshing(true)
     try {
       const [d, a, p, s, e] = await Promise.all([
         api.dashboard(),
@@ -408,7 +413,7 @@ export default function TabBI() {
       setEstoque(e)
       buildChart(p, periodo)
     } catch(e) { if (!silente) setErro(e.message) }
-    finally    { if (!silente) setLoading(false) }
+    finally    { if (!silente) setLoading(false); else setRefreshing(false) }
   }, [buildChart, periodo])
 
   useEffect(() => { carregar() }, [])
@@ -433,12 +438,19 @@ export default function TabBI() {
 
   if (loading) return <Loading />
   if (erro)    return (
-    <div className="flex items-center justify-center h-full">
-      <div className="text-center">
-        <AlertCircle size={32} className="text-red-400 mx-auto mb-3" />
-        <p className="text-slate-600 text-sm mb-3">{erro}</p>
-        <button onClick={() => carregar()} className="px-4 py-2 rounded-lg text-white text-sm font-semibold"
-                style={{ background: C.brand }}>Tentar novamente</button>
+    <div className="flex items-center justify-center h-full" role="alert" aria-live="assertive">
+      <div className="text-center px-6">
+        <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4"
+             style={{ background: '#fef2f2', border: '1px solid #fca5a5' }}>
+          <AlertCircle size={24} style={{ color: T.red }} aria-hidden="true" />
+        </div>
+        <p className="font-semibold mb-1" style={{ color: T.text }}>Falha ao carregar</p>
+        <p className="text-sm mb-4" style={{ color: T.muted }}>{erro}</p>
+        <button onClick={() => carregar()}
+                className="px-5 py-2.5 rounded-lg text-white text-sm font-semibold transition-all duration-150 hover:brightness-90 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2"
+                style={{ background: T.brand, minHeight: 44 }}>
+          Tentar novamente
+        </button>
       </div>
     </div>
   )
@@ -566,13 +578,15 @@ export default function TabBI() {
           estoque={estoque} pendentes={pendentes}
         />
         <button onClick={baixarPDF} disabled={pdfLoad}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold shrink-0 ml-3 transition-colors"
+          aria-label="Baixar relatório mensal em PDF"
+          aria-busy={pdfLoad}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold shrink-0 ml-3 transition-all duration-150 hover:brightness-95 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2"
           style={{
-            background: pdfLoad ? '#f0f4f0' : '#f0fdf4',
-            color: pdfLoad ? C.muted : C.brand2,
-            border: `1px solid ${pdfLoad ? '#e8ede8' : '#86efac'}`,
+            background: pdfLoad ? T.s3 : '#f0fdf4',
+            color: pdfLoad ? T.muted : T.brand2,
+            border: `1px solid ${pdfLoad ? T.border : '#86efac'}`,
           }}>
-          <FileDown size={12} />
+          <FileDown size={12} aria-hidden="true" />
           {pdfLoad ? 'Gerando...' : 'Relatório PDF'}
         </button>
       </div>
@@ -609,13 +623,16 @@ export default function TabBI() {
         {/* Linha chart */}
         <div className="bg-white rounded-xl p-4 flex flex-col"
              style={{ border: '1px solid #e8ede8', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
-          <div className="flex items-center gap-1 mb-2">
+          <div className="flex items-center gap-1 mb-2" role="group" aria-label="Período do gráfico">
             {[7,14,30].map(d => (
               <button key={d} onClick={() => setPeriodo(d)}
-                className="px-2.5 py-1 rounded-md text-[10px] font-bold transition-all"
+                aria-pressed={periodo === d}
+                aria-label={`${d} dias`}
+                className="px-2.5 py-1 rounded-md text-[10px] font-bold transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 active:scale-[0.95]"
                 style={{
-                  background: periodo === d ? C.brand : '#f0f4f0',
-                  color: periodo === d ? '#fff' : C.muted,
+                  background: periodo === d ? T.brand : T.s3,
+                  color: periodo === d ? '#fff' : T.muted,
+                  minHeight: 28,
                 }}>
                 {d}d
               </button>
@@ -634,21 +651,23 @@ export default function TabBI() {
 
         {/* Litros summary */}
         <div className="flex flex-col gap-3">
-          <div className="bg-white rounded-xl p-4 flex-1"
-               style={{ border: '1px solid #e8ede8', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
-            <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold mb-1">Litros Hoje</p>
-            <p className="text-[28px] font-black tabular-nums leading-none" style={{ color: C.brand }}>
-              {n(totalHoje, 1)}
-            </p>
-            <p className="text-[10px] text-slate-400 mt-1">última ordenha</p>
+          <div className="bg-white rounded-xl p-4 flex-1 transition-opacity duration-300"
+               style={{ border: `1px solid ${T.border}`, boxShadow: '0 1px 4px rgba(0,0,0,0.04)', opacity: refreshing ? 0.6 : 1 }}>
+            <p className="text-[10px] uppercase tracking-wider font-semibold mb-1" style={{ color: T.muted }}>Litros Hoje</p>
+            {refreshing
+              ? <Skeleton className="h-8 w-20 mt-1" />
+              : <p className="text-[28px] font-black tabular-nums leading-none" style={{ color: T.brand }}>{n(totalHoje, 1)}</p>
+            }
+            <p className="text-[10px] mt-1" style={{ color: T.muted }}>última ordenha</p>
           </div>
-          <div className="bg-white rounded-xl p-4 flex-1"
-               style={{ border: '1px solid #e8ede8', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
-            <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold mb-1">Litros no Mês</p>
-            <p className="text-[28px] font-black tabular-nums leading-none" style={{ color: '#0d9488' }}>
-              {n(mes.litros_mes || 0, 0)}
-            </p>
-            <p className="text-[10px] text-slate-400 mt-1">acumulado</p>
+          <div className="bg-white rounded-xl p-4 flex-1 transition-opacity duration-300"
+               style={{ border: `1px solid ${T.border}`, boxShadow: '0 1px 4px rgba(0,0,0,0.04)', opacity: refreshing ? 0.6 : 1 }}>
+            <p className="text-[10px] uppercase tracking-wider font-semibold mb-1" style={{ color: T.muted }}>Litros no Mês</p>
+            {refreshing
+              ? <Skeleton className="h-8 w-20 mt-1" />
+              : <p className="text-[28px] font-black tabular-nums leading-none" style={{ color: '#0d9488' }}>{n(mes.litros_mes || 0, 0)}</p>
+            }
+            <p className="text-[10px] mt-1" style={{ color: T.muted }}>acumulado</p>
           </div>
         </div>
 
@@ -697,11 +716,15 @@ export default function TabBI() {
                style={{ borderBottom: '1px solid #f0f4f0' }}>
             <span className="text-[13px] font-bold text-slate-700">Lista de Tarefas</span>
           </div>
-          <div className="px-4">
+          <div className="px-4" role="list" aria-label="Tarefas de parto e secagem">
             {tarefasGerais.length === 0 ? (
-              <div className="py-6 text-center">
-                <CheckCircle size={24} className="text-green-300 mx-auto mb-2" />
-                <p className="text-[12px] text-slate-400">Nenhuma tarefa pendente</p>
+              <div className="py-8 flex flex-col items-center gap-2 text-center">
+                <div className="w-12 h-12 rounded-2xl flex items-center justify-center"
+                     style={{ background: T.brandGlow, border: `1px solid ${T.brand}30` }}>
+                  <CheckCircle size={20} style={{ color: T.brand }} />
+                </div>
+                <p className="text-[13px] font-semibold" style={{ color: T.text }}>Tudo em dia</p>
+                <p className="text-[12px]" style={{ color: T.muted }}>Nenhum parto ou secagem nos próximos 30 dias</p>
               </div>
             ) : tarefasGerais.map((t, i) => (
               <TarefaItem key={i}
@@ -725,11 +748,15 @@ export default function TabBI() {
                style={{ borderBottom: '1px solid #f0f4f0' }}>
             <span className="text-[13px] font-bold text-slate-700">Lista de Tarefas Sanitárias</span>
           </div>
-          <div className="px-4">
+          <div className="px-4" role="list" aria-label="Tarefas sanitárias pendentes">
             {tarefasSan.length === 0 ? (
-              <div className="py-6 text-center">
-                <CheckCircle size={24} className="text-green-300 mx-auto mb-2" />
-                <p className="text-[12px] text-slate-400">Nenhuma atividade sanitária pendente</p>
+              <div className="py-8 flex flex-col items-center gap-2 text-center">
+                <div className="w-12 h-12 rounded-2xl flex items-center justify-center"
+                     style={{ background: '#eff6ff', border: '1px solid #bfdbfe' }}>
+                  <Stethoscope size={20} style={{ color: T.blue }} />
+                </div>
+                <p className="text-[13px] font-semibold" style={{ color: T.text }}>Sem pendências sanitárias</p>
+                <p className="text-[12px]" style={{ color: T.muted }}>Nenhuma atividade agendada nos próximos dias</p>
               </div>
             ) : tarefasSan.map((s, i) => (
               <TarefaItem key={i}
