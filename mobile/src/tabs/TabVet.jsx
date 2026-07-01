@@ -110,7 +110,7 @@ export default function TabVet() {
           <div key={k.label} className="p-4 pt-3 flex flex-col gap-1"
                style={{ borderRight: i < arr.length - 1 ? `1px solid ${T.border}` : '', borderTop: `2px solid ${k.accent}` }}>
             <p className="text-[11px] font-medium uppercase tracking-widest text-slate-500">{k.label}</p>
-            <p className="text-2xl font-mono font-semibold tabular-nums" style={{ color: k.accent === '#64748b' ? '#f1f5f9' : k.accent }}>{k.value}</p>
+            <p className="text-2xl font-mono font-semibold tabular-nums" style={{ color: k.accent === '#64748b' ? T.text : k.accent }}>{k.value}</p>
           </div>
         ))}
       </div>
@@ -150,7 +150,7 @@ export default function TabVet() {
           {[['todos', 'Todos'], ...STATUS_LIST.filter(s => s !== 'Vendido').map(s => [s, s])].map(([v, l]) => (
             <button key={v} onClick={() => setFiltroStatus(v)}
               className="px-2.5 py-1.5 rounded-md text-[11px] font-medium transition-all whitespace-nowrap"
-              style={{ background: filtroStatus === v ? T.s3 : 'transparent', border: filtroStatus === v ? `1px solid ${T.border}` : '1px solid transparent', color: filtroStatus === v ? '#e2e8f0' : T.muted }}>
+              style={{ background: filtroStatus === v ? T.s3 : 'transparent', border: filtroStatus === v ? `1px solid ${T.border}` : '1px solid transparent', color: filtroStatus === v ? T.brand2 : T.sub }}>
               {l}
             </button>
           ))}

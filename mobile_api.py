@@ -834,7 +834,7 @@ def remover_animal(aid: str, user=Depends(_get_user)):
 # ─────────────────────────────────────────────
 # SANITÁRIO (vacinas, exames, protocolos)
 # ─────────────────────────────────────────────
-_TIPOS_SANITARIO = {"Vacina", "Exame", "Medicamento", "Protocolo"}
+_TIPOS_SANITARIO = {"Vacina", "Exame", "Medicamento", "Protocolo", "Secagem", "Desmame", "Colostragem"}
 
 class SanitarioInput(BaseModel):
     tipo: str              # Vacina | Exame | Medicamento | Protocolo

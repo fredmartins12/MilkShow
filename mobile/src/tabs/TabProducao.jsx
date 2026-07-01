@@ -179,7 +179,7 @@ export default function TabProducao() {
           <div key={k.label} className="p-4 pt-3 flex flex-col gap-1"
                style={{ borderRight: i < arr.length - 1 ? `1px solid ${T.border}` : '', borderTop: `2px solid ${k.accent}` }}>
             <p className="text-[11px] font-medium uppercase tracking-widest text-slate-500">{k.label}</p>
-            <p className="text-2xl font-semibold tabular-nums font-mono" style={{ color: k.accent === '#64748b' ? '#f1f5f9' : k.accent }}>{k.value}</p>
+            <p className="text-2xl font-semibold tabular-nums font-mono" style={{ color: k.accent === '#64748b' ? T.text : k.accent }}>{k.value}</p>
           </div>
         ))}
       </div>

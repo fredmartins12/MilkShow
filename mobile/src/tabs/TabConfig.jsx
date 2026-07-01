@@ -214,7 +214,7 @@ export default function TabConfig() {
                 <div key={k.label} className="p-4 rounded-xl flex flex-col gap-1"
                      style={{ background: T.s2, border:`1px solid ${T.border}`, borderTop: `2px solid ${k.accent}` }}>
                   <p className="text-[11px] font-medium uppercase tracking-widest text-slate-500">{k.label}</p>
-                  <p className="text-xl font-mono font-semibold tabular-nums" style={{ color: k.accent === '#64748b' ? '#f1f5f9' : k.accent }}>{k.value}</p>
+                  <p className="text-xl font-mono font-semibold tabular-nums" style={{ color: k.accent === '#64748b' ? T.text : k.accent }}>{k.value}</p>
                 </div>
               ))}
             </div>

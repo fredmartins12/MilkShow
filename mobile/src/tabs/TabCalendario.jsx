@@ -152,7 +152,7 @@ function MiniCalendar({ ano, mes, eventos, onMes }) {
               <span className="w-7 h-7 flex items-center justify-center rounded-full text-xs font-medium"
                     style={{
                       background: ehHoje ? '#16a34a' : 'transparent',
-                      color:      ehHoje ? '#fff' : evs.length > 0 ? '#f1f5f9' : '#475569',
+                      color:      ehHoje ? '#fff' : evs.length > 0 ? T.text : T.sub,
                     }}>
                 {dia}
               </span>
@@ -285,7 +285,7 @@ export default function TabCalendario() {
           <div key={k.label} className="p-5 pt-3 flex flex-col gap-1"
                style={{ borderRight: i < arr.length - 1 ? `1px solid ${T.border}` : 'none', borderTop: `2px solid ${k.accent}` }}>
             <p className="text-[11px] font-medium uppercase tracking-widest text-slate-500">{k.label}</p>
-            <p className="text-2xl font-mono font-bold tabular-nums" style={{ color: k.accent === '#64748b' ? '#f1f5f9' : k.accent }}>{k.value}</p>
+            <p className="text-2xl font-mono font-bold tabular-nums" style={{ color: k.accent === '#64748b' ? T.text : k.accent }}>{k.value}</p>
           </div>
         ))}
       </div>
@@ -309,7 +309,7 @@ export default function TabCalendario() {
                 className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-all"
                 style={{
                   background: filtroTipo === 'todos' ? '#1e293b' : 'transparent',
-                  color: filtroTipo === 'todos' ? '#cbd5e1' : '#64748b',
+                  color: filtroTipo === 'todos' ? T.brand2 : T.sub,
                 }}>
                 <span>Todos os eventos</span>
                 <span className="tabular-nums font-medium">{eventos.length}</span>
@@ -349,7 +349,7 @@ export default function TabCalendario() {
                 style={{
                   background: filtroTipo === f.key ? '#1e293b' : 'transparent',
                   border: `1px solid ${filtroTipo === f.key ? '#334155' : 'transparent'}`,
-                  color: filtroTipo === f.key ? '#cbd5e1' : '#64748b',
+                  color: filtroTipo === f.key ? T.brand2 : T.sub,
                 }}>
                 {f.label}
               </button>
