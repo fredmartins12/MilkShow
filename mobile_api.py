@@ -17,12 +17,15 @@ import asyncio
 import datetime
 import time
 import base64
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Depends, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+logger = logging.getLogger(__name__)
 
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -98,8 +101,7 @@ _SECRET = os.environ.get("BOT_ADMIN_TOKEN")
 if not _SECRET:
     import secrets as _secrets_mod
     _SECRET = _secrets_mod.token_hex(32)
-    import logging as _log_sec
-    _log_sec.getLogger(__name__).warning(
+    logger.warning(
         "BOT_ADMIN_TOKEN não definido — usando secret temporário. "
         "Tokens não persistem entre restarts."
     )
@@ -205,6 +207,20 @@ class LoginRequest(BaseModel):
     tel: str
     pin: str
 
+    @field_validator("tel")
+    @classmethod
+    def tel_nao_vazio(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Telefone obrigatório")
+        return v
+
+    @field_validator("pin")
+    @classmethod
+    def pin_nao_vazio(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("PIN obrigatório")
+        return v
+
 class ProducaoInput(BaseModel):
     data: str
     id_animal: str
@@ -213,6 +229,38 @@ class ProducaoInput(BaseModel):
     racao: float = 0.0
     turno: str = "manhã"
     obs: str = ""
+
+    @field_validator("data")
+    @classmethod
+    def data_formato(cls, v: str) -> str:
+        try:
+            datetime.date.fromisoformat(v)
+        except (ValueError, TypeError):
+            raise ValueError("Campo 'data' deve estar no formato YYYY-MM-DD")
+        return v
+
+    @field_validator("leite")
+    @classmethod
+    def leite_positivo(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("Produção de leite não pode ser negativa")
+        return v
+
+    @field_validator("racao")
+    @classmethod
+    def racao_nao_negativa(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("Quantidade de ração não pode ser negativa")
+        return v
+
+    @field_validator("nome_animal", "id_animal")
+    @classmethod
+    def campo_nao_vazio(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Campo obrigatório não pode ser vazio")
+        return v
+
+_TIPOS_FINANCEIRO = {"receita", "despesa"}
 
 class FinanceiroInput(BaseModel):
     data: str
@@ -223,6 +271,29 @@ class FinanceiroInput(BaseModel):
     tipo: str              # "receita" | "despesa"
     obs: str = ""
 
+    @field_validator("data")
+    @classmethod
+    def data_formato(cls, v: str) -> str:
+        try:
+            datetime.date.fromisoformat(v)
+        except (ValueError, TypeError):
+            raise ValueError("Campo 'data' deve estar no formato YYYY-MM-DD")
+        return v
+
+    @field_validator("tipo")
+    @classmethod
+    def tipo_valido(cls, v: str) -> str:
+        if v not in _TIPOS_FINANCEIRO:
+            raise ValueError(f"tipo deve ser: {', '.join(_TIPOS_FINANCEIRO)}")
+        return v
+
+    @field_validator("valor")
+    @classmethod
+    def valor_positivo(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("Valor não pode ser negativo")
+        return v
+
 class EstoqueInput(BaseModel):
     item: str
     qtd: float
@@ -231,10 +302,38 @@ class EstoqueInput(BaseModel):
     categoria: str = "Outros"
     min_alerta: Optional[float] = None
 
+    @field_validator("item")
+    @classmethod
+    def item_nao_vazio(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Nome do item obrigatório")
+        return v
+
+    @field_validator("qtd")
+    @classmethod
+    def qtd_nao_negativa(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("Quantidade não pode ser negativa")
+        return v
+
+    @field_validator("custo_unit")
+    @classmethod
+    def custo_nao_negativo(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("Custo unitário não pode ser negativo")
+        return v
+
 class UsuarioWppInput(BaseModel):
     tel: str          # aceita (83) 99999-0000 ou 5583999990000
     nome: str
     perfil: str       # 'admin' | 'operador' | 'vet' | 'visualizador'
+
+    @field_validator("nome")
+    @classmethod
+    def nome_nao_vazio(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Nome obrigatório")
+        return v
 
 class ChatInput(BaseModel):
     mensagem: str
@@ -495,9 +594,9 @@ def registrar_producao(body: ProducaoInput, user=Depends(_get_user)):
     doc = body.model_dump()
     doc["registrado_por"] = user.get("nome") or user.get("email") or user.get("tel", "")
     doc["ts"] = datetime.datetime.now().isoformat()
-    _coll(fid, "producao").add(doc)
+    _, ref = _coll(fid, "producao").add(doc)
     notify_update(fid, "producao")
-    return {"ok": True}
+    return {"ok": True, "id": ref.id}
 
 @mobile_router.delete("/producao/{pid}")
 def remover_producao(pid: str, user=Depends(_get_user)):
@@ -532,9 +631,9 @@ def registrar_financeiro(body: FinanceiroInput, user=Depends(_get_user)):
         doc["cat"] = doc["categoria"]
     doc["registrado_por"] = user.get("nome", user.get("email", ""))
     doc["ts"] = datetime.datetime.now().isoformat()
-    _coll(fid, "financeiro").add(doc)
+    _, ref = _coll(fid, "financeiro").add(doc)
     notify_update(fid, "financeiro")
-    return {"ok": True}
+    return {"ok": True, "id": ref.id}
 
 @mobile_router.delete("/financeiro/{fid_doc}")
 def remover_financeiro(fid_doc: str, user=Depends(_get_user)):
@@ -673,8 +772,8 @@ def chat_ia(body: ChatInput, user=Depends(_get_user)):
         resposta = _processar(tel_web, body.mensagem.strip(), fazenda_id, permissoes)
         return {"resposta": resposta or "✅ Feito!"}
     except Exception as e:
-        import traceback
-        return {"resposta": f"Erro interno: {str(e)[:120]}"}
+        logger.exception("Erro no chat IA para fazenda %s", fazenda_id)
+        raise HTTPException(status_code=500, detail={"error": "Erro interno ao processar mensagem"})
 
 @mobile_router.patch("/estoque/{item_id}")
 def atualizar_estoque(item_id: str, body: EstoqueInput, user=Depends(_get_user)):
@@ -689,6 +788,8 @@ def atualizar_estoque(item_id: str, body: EstoqueInput, user=Depends(_get_user))
 # ─────────────────────────────────────────────
 # ANIMAIS — POST (adicionar / atualizar)
 # ─────────────────────────────────────────────
+_STATUS_ANIMAL = {"Lactação", "Seca", "Novilha", "Vendido", "Morto", "Bezerra"}
+
 class AnimalInput(BaseModel):
     nome: str
     status: str = "Lactação"
@@ -700,6 +801,13 @@ class AnimalInput(BaseModel):
     mae: str = ""
     obs: str = ""
 
+    @field_validator("nome")
+    @classmethod
+    def nome_nao_vazio(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Nome do animal obrigatório")
+        return v
+
 @mobile_router.post("/animais")
 def adicionar_animal(body: AnimalInput, user=Depends(_get_user)):
     fid = user["fazenda_id"]
@@ -708,10 +816,12 @@ def adicionar_animal(body: AnimalInput, user=Depends(_get_user)):
     aid = doc.pop("id", None) or None
     if aid:
         _coll(fid, "animais").document(aid).set(doc, merge=True)
+        doc_id = aid
     else:
-        _coll(fid, "animais").add(doc)
+        _, ref = _coll(fid, "animais").add(doc)
+        doc_id = ref.id
     notify_update(fid, "animais")
-    return {"ok": True}
+    return {"ok": True, "id": doc_id}
 
 @mobile_router.delete("/animais/{aid}")
 def remover_animal(aid: str, user=Depends(_get_user)):
@@ -724,6 +834,8 @@ def remover_animal(aid: str, user=Depends(_get_user)):
 # ─────────────────────────────────────────────
 # SANITÁRIO (vacinas, exames, protocolos)
 # ─────────────────────────────────────────────
+_TIPOS_SANITARIO = {"Vacina", "Exame", "Medicamento", "Protocolo", "Secagem", "Desmame", "Colostragem"}
+
 class SanitarioInput(BaseModel):
     tipo: str              # Vacina | Exame | Medicamento | Protocolo
     animal: str
@@ -734,6 +846,29 @@ class SanitarioInput(BaseModel):
     executado: bool = False
     dose: str = ""
     via: str = ""
+
+    @field_validator("tipo")
+    @classmethod
+    def tipo_valido(cls, v: str) -> str:
+        if v not in _TIPOS_SANITARIO:
+            raise ValueError(f"tipo deve ser: {', '.join(_TIPOS_SANITARIO)}")
+        return v
+
+    @field_validator("data")
+    @classmethod
+    def data_formato(cls, v: str) -> str:
+        try:
+            datetime.date.fromisoformat(v)
+        except (ValueError, TypeError):
+            raise ValueError("Campo 'data' deve estar no formato YYYY-MM-DD")
+        return v
+
+    @field_validator("animal", "protocolo")
+    @classmethod
+    def campo_nao_vazio(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Campo obrigatório não pode ser vazio")
+        return v
 
 @mobile_router.get("/sanitario")
 def listar_sanitario(dias: int = 90, user=Depends(_get_user)):
@@ -751,9 +886,9 @@ def registrar_sanitario(body: SanitarioInput, user=Depends(_get_user)):
     doc = body.model_dump()
     doc["registrado_por"] = user.get("nome", "")
     doc["ts"] = datetime.datetime.now().isoformat()
-    _coll(fid, "sanitario").add(doc)
+    _, ref = _coll(fid, "sanitario").add(doc)
     notify_update(fid, "sanitario")
-    return {"ok": True}
+    return {"ok": True, "id": ref.id}
 
 @mobile_router.patch("/sanitario/{sid}/executar")
 def executar_sanitario(sid: str, user=Depends(_get_user)):
@@ -782,7 +917,12 @@ def get_config(user=Depends(_get_user)):
 @mobile_router.post("/config")
 def salvar_config(body: dict, user=Depends(_get_user)):
     fid = user["fazenda_id"]
+    if not body:
+        raise HTTPException(status_code=422, detail={"error": "Body não pode ser vazio"})
+    _CHAVES_BLOQUEADAS = {"fazenda_id", "owner_uid", "owner_email", "plano"}
     for chave, valor in body.items():
+        if str(chave) in _CHAVES_BLOQUEADAS:
+            raise HTTPException(status_code=403, detail={"error": f"Chave protegida: {chave}"})
         _coll(fid, "config").document(str(chave)).set({"chave": str(chave), "valor": valor})
     notify_update(fid, "config")
     return {"ok": True}
@@ -1063,7 +1203,7 @@ def agenda_semana(dias: int = 7, user=Depends(_get_user)):
                     if str(data_a) in agenda:
                         agenda[str(data_a)].append({"tipo": "parto", "animal": nome, "texto": f"Parto em {dd}d: {nome}"})
     except Exception:
-        pass
+        logger.warning("Erro ao calcular agenda de animais para fazenda %s", fid, exc_info=True)
 
     try:
         protos = [d.to_dict() for d in _coll(fid, "protocolos_sanitarios").stream()
@@ -1073,7 +1213,7 @@ def agenda_semana(dias: int = 7, user=Depends(_get_user)):
             if prox and str(prox) in agenda:
                 agenda[str(prox)].append({"tipo": "sanitario", "animal": p.get("animal",""), "texto": f"Protocolo: {p.get('nome','')}"})
     except Exception:
-        pass
+        logger.warning("Erro ao calcular agenda de protocolos para fazenda %s", fid, exc_info=True)
 
     resultado = []
     for i in range(dias):
@@ -1191,8 +1331,10 @@ def relatorio_mensal(user=Depends(_get_user), mes: str = Query(default="")):
     if mes:
         try:
             ano, m = int(mes[:4]), int(mes[5:7])
-        except Exception:
-            ano, m = hoje.year, hoje.month
+            if not (1 <= m <= 12):
+                raise ValueError("Mês fora do intervalo")
+        except (ValueError, IndexError):
+            raise HTTPException(status_code=422, detail={"error": "Parâmetro 'mes' deve estar no formato YYYY-MM"})
     else:
         ano, m = hoje.year, hoje.month
 
@@ -1529,6 +1671,13 @@ def relatorio_mensal(user=Depends(_get_user), mes: str = Query(default="")):
 class RacaoInput(BaseModel):
     ingredientes: list  # [{"nome": str, "kg": float}]
 
+    @field_validator("ingredientes")
+    @classmethod
+    def ingredientes_nao_vazio(cls, v: list) -> list:
+        if not v:
+            raise ValueError("Lista de ingredientes não pode ser vazia")
+        return v
+
 @mobile_router.get("/nutricao/insumos")
 def listar_insumos(user=Depends(_get_user)):
     """Retorna a lista completa de insumos agrupados por categoria."""
@@ -1561,7 +1710,9 @@ def salvar_racao(body: dict, user=Depends(_get_user)):
     from nutricao import calcular_racao as _calc
     fid  = user["fazenda_id"]
     ingredientes = body.get("ingredientes", [])
-    nome  = body.get("nome", "Ração sem nome")
+    if not ingredientes or not isinstance(ingredientes, list):
+        raise HTTPException(status_code=422, detail={"error": "Campo 'ingredientes' é obrigatório e deve ser uma lista"})
+    nome  = (body.get("nome") or "Ração sem nome").strip() or "Ração sem nome"
     calc  = _calc(ingredientes)
     doc   = {
         "nome":        nome,

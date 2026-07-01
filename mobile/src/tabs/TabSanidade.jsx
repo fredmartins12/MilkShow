@@ -159,7 +159,7 @@ export default function TabSanidade() {
           <div key={k.label} className="p-4 pt-3 flex flex-col gap-1"
                style={{ borderRight: i < arr.length - 1 ? `1px solid ${T.border}` : '', borderTop: `2px solid ${k.accent}` }}>
             <p className="text-[11px] font-medium uppercase tracking-widest text-slate-500">{k.label}</p>
-            <p className="text-2xl font-mono font-semibold tabular-nums" style={{ color: k.accent === '#64748b' ? '#f1f5f9' : k.accent }}>{k.value}</p>
+            <p className="text-2xl font-mono font-semibold tabular-nums" style={{ color: k.accent === '#64748b' ? T.text : k.accent }}>{k.value}</p>
           </div>
         ))}
       </div>
@@ -175,7 +175,7 @@ export default function TabSanidade() {
               {[['pendentes','Pendentes'],['todos','Todos'],['executados','Executados']].map(([v, l]) => (
                 <button key={v} onClick={() => setFiltro(v)}
                   className="px-2 py-1 rounded text-[11px] font-medium transition-all"
-                  style={{ background: filtro === v ? T.border : 'transparent', color: filtro === v ? '#cbd5e1' : '#475569' }}>
+                  style={{ background: filtro === v ? T.border : 'transparent', color: filtro === v ? T.brand2 : T.sub }}>
                   <span className="text-[11px] font-medium">{l}</span>
                 </button>
               ))}

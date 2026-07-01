@@ -3,7 +3,7 @@ import {
   ComposedChart, Area, Line, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
-import { Plus, RefreshCw, Trash2, Download, Activity } from 'lucide-react'
+import { Plus, RefreshCw, Trash2, Download, Activity, CheckCircle, Loader2 } from 'lucide-react'
 import { api } from '../api.js'
 import {
   Loading, ErrorMsg, Toast, Modal, SectionHeader,
@@ -70,6 +70,8 @@ export default function TabProducao() {
   const [modal, setModal]         = useState(false)
   const [confirmDel, setDel]      = useState(null)
   const [saving, setSaving]       = useState(false)
+  const [submitOk, setSubmitOk]   = useState(false)
+  const [leiteErro, setLeiteErro] = useState('')
   const [periodo, setPeriodo]     = useState(30)
   const [tipo, setTipo]           = useState('area')
   const [estoqueRacao, setEstRacao] = useState([])
@@ -122,6 +124,8 @@ export default function TabProducao() {
   async function salvar(e) {
     e.preventDefault()
     if (!form.nome_animal || !form.leite || isNaN(form.leite)) return
+    if (parseFloat(form.leite) < 0) { setLeiteErro('Litros não pode ser negativo'); return }
+    setLeiteErro('')
     setSaving(true)
     try {
       const racaoKg = parseFloat(form.racao) || 0
@@ -134,10 +138,14 @@ export default function TabProducao() {
           await api.atualizarEstoque(item.id, { ...item, qtd: novaQtd })
         }
       }
+      setSubmitOk(true)
+      setTimeout(() => {
+        setSubmitOk(false)
+        setModal(false)
+        setForm(f => ({ ...f, id_animal: '', nome_animal: '', leite: '', racao: '', obs: '', estoqueId: '' }))
+        carregar(periodo)
+      }, 1200)
       setToast({ msg: `${form.nome_animal} — ${form.leite}L registrado`, tipo: 'ok' })
-      setModal(false)
-      setForm(f => ({ ...f, id_animal: '', nome_animal: '', leite: '', racao: '', obs: '', estoqueId: '' }))
-      carregar(periodo)
     } catch(e) { setToast({ msg: e.message, tipo: 'erro' }) }
     finally { setSaving(false) }
   }
@@ -171,7 +179,7 @@ export default function TabProducao() {
           <div key={k.label} className="p-4 pt-3 flex flex-col gap-1"
                style={{ borderRight: i < arr.length - 1 ? `1px solid ${T.border}` : '', borderTop: `2px solid ${k.accent}` }}>
             <p className="text-[11px] font-medium uppercase tracking-widest text-slate-500">{k.label}</p>
-            <p className="text-2xl font-semibold tabular-nums font-mono" style={{ color: k.accent === '#64748b' ? '#f1f5f9' : k.accent }}>{k.value}</p>
+            <p className="text-2xl font-semibold tabular-nums font-mono" style={{ color: k.accent === '#64748b' ? T.text : k.accent }}>{k.value}</p>
           </div>
         ))}
       </div>
@@ -228,8 +236,8 @@ export default function TabProducao() {
           </thead>
           <tbody>
             {registros.slice(0, 150).map((r, i) => (
-              <tr key={r.id || i} className="hover:bg-white/[0.02] transition-colors"
-                  style={{ borderBottom: `1px solid ${T.border2}` }}>
+              <tr key={r.id || i} className="transition-colors hover:brightness-95"
+                  style={{ borderBottom: `1px solid ${T.border2}`, background: i % 2 === 0 ? T.surface : T.s2 }}>
                 <td className="px-4 py-2.5 text-slate-500">{r.data}</td>
                 <td className="px-4 py-2.5 text-slate-200 font-semibold">{r.nome_animal}</td>
                 <td className="px-4 py-2.5 text-slate-500 capitalize">{r.turno}</td>
@@ -289,7 +297,14 @@ export default function TabProducao() {
           <div className="grid grid-cols-2 gap-4">
             <Field label="Litros de leite">
               <Input type="number" step="0.1" min="0" placeholder="0.0" inputMode="decimal"
-                     value={form.leite} onChange={e => setForm(f => ({ ...f, leite: e.target.value }))} />
+                     value={form.leite}
+                     onChange={e => {
+                       const v = e.target.value
+                       setForm(f => ({ ...f, leite: v }))
+                       setLeiteErro(parseFloat(v) < 0 ? 'Litros não pode ser negativo' : '')
+                     }}
+                     style={leiteErro ? { borderColor: T.red, boxShadow: `0 0 0 2px ${T.red}22` } : {}} />
+              {leiteErro && <p className="text-[11px] mt-1 font-medium" style={{ color: T.red }}>{leiteErro}</p>}
             </Field>
             <Field label="Ração (kg)">
               <Input type="number" step="0.1" min="0" placeholder="0.0" inputMode="decimal"
@@ -311,9 +326,13 @@ export default function TabProducao() {
             </Field>
           )}
           <div className="flex justify-end gap-2 pt-2">
-            <Btn variant="ghost" onClick={() => setModal(false)}>Cancelar</Btn>
-            <Btn type="submit" variant="primary" disabled={saving}>
-              {saving ? 'Salvando...' : 'Salvar registro'}
+            <Btn variant="ghost" onClick={() => setModal(false)} disabled={saving || submitOk}>Cancelar</Btn>
+            <Btn type="submit" variant={submitOk ? 'success' : 'primary'} disabled={saving || submitOk}>
+              {submitOk
+                ? <><CheckCircle size={13} /> Registrado!</>
+                : saving
+                ? <><Loader2 size={13} className="animate-spin" /> Salvando...</>
+                : 'Salvar registro'}
             </Btn>
           </div>
         </form>

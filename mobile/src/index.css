@@ -65,3 +65,10 @@ button, a, input, select, textarea {
   transition-duration: 150ms;
   transition-timing-function: ease-out;
 }
+
+/* Remapeamento de contraste — classes escritas para tema escuro, agora em tema claro */
+/* text-slate-100/200/300 eram legíveis em fundo #080e1c mas são invisíveis em fundo branco */
+.text-slate-100 { color: #1a2e1a !important; }
+.text-slate-200 { color: #1a2e1a !important; }
+.text-slate-300 { color: #4a6741 !important; }
+.text-slate-400 { color: #4a6741 !important; }

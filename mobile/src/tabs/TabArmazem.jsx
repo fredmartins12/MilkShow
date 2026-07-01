@@ -57,7 +57,7 @@ function ItemCard({ item, onEdit, onDelete }) {
         <div>
           <p className="text-[11px] text-slate-500 mb-0.5">Quantidade</p>
           <p className="text-2xl font-mono font-bold tabular-nums"
-             style={{ color: zero ? '#ef4444' : baixo ? '#f59e0b' : '#f1f5f9' }}>
+             style={{ color: zero ? '#ef4444' : baixo ? '#f59e0b' : T.text }}>
             {Number(item.qtd).toLocaleString('pt-BR')}
             <span className="text-slate-600 text-sm font-normal ml-1">{item.un}</span>
           </p>
@@ -242,7 +242,7 @@ export default function TabArmazem() {
           <div key={k.label} className="p-5 pt-3 flex flex-col gap-1"
                style={{ borderRight: i < arr.length - 1 ? `1px solid ${T.border}` : 'none', borderTop: `2px solid ${k.accent}` }}>
             <p className="text-[11px] font-medium uppercase tracking-widest text-slate-500">{k.label}</p>
-            <p className="text-2xl font-mono font-bold tabular-nums" style={{ color: k.accent === '#64748b' ? '#f1f5f9' : k.accent }}>{k.value}</p>
+            <p className="text-2xl font-mono font-bold tabular-nums" style={{ color: k.accent === '#64748b' ? T.text : k.accent }}>{k.value}</p>
           </div>
         ))}
       </div>
@@ -269,7 +269,7 @@ export default function TabArmazem() {
             style={{
               background: filtro === cat ? '#1e293b' : 'transparent',
               border:     `1px solid ${filtro === cat ? '#334155' : 'transparent'}`,
-              color:       filtro === cat ? '#cbd5e1' : '#64748b',
+              color:       filtro === cat ? T.brand2 : T.sub,
             }}>
             {cat}
           </button>
